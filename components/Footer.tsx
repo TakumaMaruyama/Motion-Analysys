@@ -1,3 +1,5 @@
+"use client";
+
 import React from 'react';
 
 const Footer: React.FC = () => {
@@ -43,10 +45,10 @@ const Footer: React.FC = () => {
           </div>
         </div>
         
-        <Separator className="my-6 bg-[#333333]" />
+        <hr className="my-6 border-[#333333]" />
         
         <div className="text-center text-sm text-[#cccccc]">
-          © 2024 ハンドジェスチャー分析. All rights reserved.
+          2024 ハンドジェスチャー分析. All rights reserved.
         </div>
       </div>
     </footer>

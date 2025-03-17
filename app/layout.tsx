@@ -1,22 +1,24 @@
 import React from 'react';
-import { Header } from '../components/Header';
-import { Footer } from '../components/Footer';
-import { SupabaseProvider } from '../providers/SupabaseProvider';
-import { StateProvider } from '../providers/StateProvider';
+import Header from '../components/Header';
+import Footer from '../components/Footer';
+import SupabaseProvider from '../providers/SupabaseProvider';
+import StateProvider from '../providers/StateProvider';
 
-const RootLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
   return (
     <html lang="ja">
-      <body style={{ backgroundColor: '#ffffff', color: '#333333' }}>
+      <body>
         <SupabaseProvider>
           <StateProvider>
             <div className="min-h-screen flex flex-col">
               <Header />
-              
-              <main className="flex-1 container mx-auto px-4 py-8" style={{ backgroundColor: '#ffffff' }}>
+              <main className="flex-1">
                 {children}
               </main>
-
               <Footer />
             </div>
           </StateProvider>
@@ -24,11 +26,4 @@ const RootLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       </body>
     </html>
   );
-};
-
-export default RootLayout;
-
-export const metadata = {
-  title: 'ハンドジェスチャー分析アプリ',
-  description: '動画のハンドジェスチャーを分析し、ランドマークを付与するアプリケーション',
-};
+}

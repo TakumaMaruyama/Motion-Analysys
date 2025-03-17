@@ -1,6 +1,7 @@
 import React from 'react';
 import { Button } from '../components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card';
+import Link from 'next/link';
 
 const Page: React.FC = () => {
   return (
@@ -8,19 +9,21 @@ const Page: React.FC = () => {
       <div className="max-w-7xl mx-auto px-4 py-12">
         <section className="text-center mb-16">
           <h1 className="text-4xl font-bold mb-4 text-[#2c3e50] dark:text-white">
-            ハンドジェスチャー分析アプリ
+            モーション分析アプリ
           </h1>
           <p className="text-xl text-[#34495e] dark:text-gray-300 mb-8">
-            動画からハンドジェスチャーを自動検出・分析
+            動画から全身の動きやハンドジェスチャーを自動検出・分析
           </p>
           <video controls className="w-full max-w-2xl mx-auto rounded-lg shadow-lg mb-8">
             <source src="src/public/videos/demo.mp4" type="video/mp4" />
             お使いのブラウザは動画再生に対応していません
           </video>
           <div className="flex justify-center gap-4">
-            <Button variant="default" size="lg">
-              無料で始める
-            </Button>
+            <Link href="/motion-analysis">
+              <Button variant="default" size="lg">
+                全身動作分析を試す
+              </Button>
+            </Link>
             <Button variant="outline" size="lg">
               詳しく見る
             </Button>
@@ -42,7 +45,7 @@ const Page: React.FC = () => {
               <CardTitle>高精度な分析</CardTitle>
             </CardHeader>
             <CardContent>
-              <p>MediaPipe Handsによる高精度なハンドジェスチャー認識</p>
+              <p>MediaPipe Poseによる高精度な全身動作認識</p>
             </CardContent>
           </Card>
 
@@ -61,11 +64,13 @@ const Page: React.FC = () => {
             さっそく始めましょう
           </h2>
           <div className="flex justify-center gap-4">
-            <Button variant="default" size="lg">
-              新規登録
-            </Button>
+            <Link href="/motion-analysis">
+              <Button variant="default" size="lg">
+                全身動作分析へ
+              </Button>
+            </Link>
             <Button variant="outline" size="lg">
-              ログイン
+              ハンドジェスチャー分析へ
             </Button>
           </div>
         </section>

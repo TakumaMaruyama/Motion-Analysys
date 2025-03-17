@@ -1,4 +1,7 @@
+"use client";
+
 import React, { useState, useEffect } from 'react';
+import { Button } from './ui/button';
 
 const Header: React.FC = () => {
   const [user, setUser] = useState(null);
@@ -25,15 +28,9 @@ const Header: React.FC = () => {
 
           <div className="flex items-center space-x-4">
             {user ? (
-              <div className="flex items-center space-x-4">
-                <Avatar>
-                  <AvatarImage src={user.avatar_url} alt="ユーザーアバター" />
-                  <AvatarFallback>UN</AvatarFallback>
-                </Avatar>
-                <Button variant="outline" onClick={() => {}}>
-                  ログアウト
-                </Button>
-              </div>
+              <Button variant="outline" onClick={() => {}}>
+                ログアウト
+              </Button>
             ) : (
               <Button onClick={() => {}}>
                 ログイン

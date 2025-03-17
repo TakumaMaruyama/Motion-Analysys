@@ -1,3 +1,5 @@
+"use client";
+
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
@@ -57,4 +59,4 @@ const SupabaseProvider: React.FC<{ children: React.ReactNode }> = ({ children })
   );
 };
 
-export default SupabaseProvider;
+export default SupabaseProvider; // または export { SupabaseProvider }
