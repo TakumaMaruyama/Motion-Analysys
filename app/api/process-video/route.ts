@@ -1,9 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
-import { Hands } from '@mediapipe/hands';
-import * as ffmpeg from 'ffmpeg';
 import { supabase } from '@/lib/supabase';
-import { processVideo } from '@/utils/processVideo';
 
 export async function POST(request: Request) {
   try {
@@ -23,26 +20,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'アップロードに失敗しました' }, { status: 500 });
     }
 
-    // 動画処理とランドマーク抽出
-    const { processedVideoUrl, landmarks } = await processVideo(videoFile);
-
-    // ランドマークデータをデータベースに保存
-    const { error: dbError } = await supabase
-      .from('landmarks')
-      .insert({
-        video_id: uploadData.path,
-        landmarks: landmarks,
-        created_at: new Date().toISOString()
-      });
-
-    if (dbError) {
-      return NextResponse.json({ error: 'ランドマークの保存に失敗しました' }, { status: 500 });
-    }
+    // 動画のURLを返す
+    const videoUrl = supabase.storage
+      .from('videos')
+      .getPublicUrl(uploadData.path).data.publicUrl;
 
     return NextResponse.json({
-      originalVideo: uploadData.path,
-      processedVideo: processedVideoUrl,
-      landmarks: landmarks
+      success: true,
+      videoUrl: videoUrl,
+      videoId: uploadData.path
     });
 
   } catch (error) {
