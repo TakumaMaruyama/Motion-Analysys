@@ -49,7 +49,7 @@ const Footer: React.FC = () => {
         <Separator className="my-6 bg-[#333333]" />
         
         <div className="text-center text-sm text-[#cccccc]">
-          2024 ハンドジェスチャー分析. All rights reserved.
+          © 2024 ハンドジェスチャー分析. All rights reserved.
         </div>
       </div>
     </footer>
