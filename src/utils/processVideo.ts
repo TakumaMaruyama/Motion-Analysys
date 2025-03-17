@@ -1,8 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 import { Hands } from '@mediapipe/hands';
-import { createFFmpeg, fetchFile } from '@ffmpeg/ffmpeg';
+import { FFmpeg } from '@ffmpeg/ffmpeg';
 
-const ffmpeg = createFFmpeg({ log: true });
+const ffmpeg = new FFmpeg();
 
 interface LandmarkData {
   frame: number;
@@ -86,17 +86,17 @@ export async function processVideo(videoBlob: Blob) {
 
   // フレームを結合して新しい動画を生成
   const processedFileName = `processed_${timestamp}.mp4`;
-  ffmpeg.FS('writeFile', 'frames.txt', frames.join('\n'));
-  await ffmpeg.run(
+  await ffmpeg.writeFile('frames.txt', frames.join('\n'));
+  await ffmpeg.exec([
     '-f', 'concat',
     '-i', 'frames.txt',
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
     processedFileName
-  );
+  ]);
 
-  const processedVideoData = ffmpeg.FS('readFile', processedFileName);
-  const processedVideoBlob = new Blob([processedVideoData.buffer], { type: 'video/mp4' });
+  const processedVideoData = await ffmpeg.readFile(processedFileName);
+  const processedVideoBlob = new Blob([processedVideoData], { type: 'video/mp4' });
 
   // 処理済み動画をSupabaseにアップロード
   const { data: processedData, error: processedError } = await supabase.storage
