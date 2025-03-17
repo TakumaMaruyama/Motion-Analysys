@@ -1,6 +1,12 @@
 import React, { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
 
-const UploadVideoButton: React.FC = () => {
+interface UploadVideoButtonProps {
+  onUploadComplete?: () => void;
+}
+
+const UploadVideoButton: React.FC<UploadVideoButtonProps> = ({ onUploadComplete }) => {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
 
@@ -15,26 +21,39 @@ const UploadVideoButton: React.FC = () => {
     formData.append('video', file);
 
     try {
-      const response = await fetch('/api/process-video', {
-        method: 'POST',
-        body: formData,
-        onUploadProgress: (progressEvent) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/process-video');
+      
+      xhr.upload.addEventListener('progress', (progressEvent) => {
+        if (progressEvent.lengthComputable) {
           const percentCompleted = Math.round(
             (progressEvent.loaded * 100) / progressEvent.total
           );
           setProgress(percentCompleted);
-        },
+        }
       });
-
-      if (!response.ok) {
-        throw new Error('アップロードに失敗しました');
-      }
-
-      const data = await response.json();
-      window.location.reload();
+      
+      xhr.onload = async () => {
+        if (xhr.status === 200) {
+          if (onUploadComplete) {
+            onUploadComplete();
+          }
+        } else {
+          console.error('アップロードに失敗しました');
+        }
+        setUploading(false);
+        setProgress(0);
+      };
+      
+      xhr.onerror = () => {
+        console.error('Error uploading video');
+        setUploading(false);
+        setProgress(0);
+      };
+      
+      xhr.send(formData);
     } catch (error) {
       console.error('Error uploading video:', error);
-    } finally {
       setUploading(false);
       setProgress(0);
     }

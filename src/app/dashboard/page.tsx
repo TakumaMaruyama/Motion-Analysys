@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { useRouter } from 'next/router';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
-import { VideoList } from 'src/components/VideoList';
-import { UploadVideoButton } from 'src/components/UploadVideoButton';
-import { supabase } from 'src/lib/supabase';
+import VideoList from '@/components/VideoList';
+import UploadVideoButton from '@/components/UploadVideoButton';
+import { supabase } from '@/lib/supabase';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Video } from '@/types/video';
 
-const DashboardPage: React.FC = () => {
+const DashboardPage = () => {
   const router = useRouter();
-  const [videos, setVideos] = useState([]);
+  const [videos, setVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -53,7 +55,15 @@ const DashboardPage: React.FC = () => {
         </CardHeader>
         <CardContent>
           <div className="mb-6">
-            <UploadVideoButton onUploadComplete={() => fetchVideos} />
+            <UploadVideoButton onUploadComplete={() => {
+              const getUser = async () => {
+                const { data: { session } } = await supabase.auth.getSession();
+                if (session) {
+                  fetchVideos(session.user.id);
+                }
+              };
+              getUser();
+            }} />
           </div>
           {loading ? (
             <div className="text-center py-8 text-[#666666] dark:text-[#cccccc]">
