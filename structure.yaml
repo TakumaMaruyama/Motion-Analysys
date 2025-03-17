@@ -1,0 +1,323 @@
+src:
+  structure.yaml:
+    content: |-
+      動画アップロード・ハンドジェスチャー分析Webアプリケーションの全体設計
+      - 概要:
+        ユーザーが動画をアップロードすると、MediaPipe Handsを用いてハンドジェスチャーを分析し、
+        ランドマークを付与した動画を返すWebアプリケーション。
+        Windsurf (開発ツール)、Supabase (ストレージ、データベース)、Next.js (UI)、Vercel (デプロイ) を使用。
+      - 主要機能:
+        1. 動画アップロード:
+           - ユーザーが動画ファイル (mp4など) をアップロード
+           - Supabase Storageに動画を保存
+        2. ハンドジェスチャー分析:
+           - アップロードされた動画をMediaPipe Handsで処理
+           - 各フレームの手のランドマーク (21個の3D座標) を抽出
+           - ランドマーク情報を時系列データとしてSupabase Databaseに保存
+        3. ランドマーク付き動画生成:
+           - 元の動画の各フレームにランドマークを描画
+           - 描画済みのフレームを結合して新しい動画 (mp4) を生成
+           - 生成された動画をSupabase Storageに保存
+        4. ユーザー管理:
+           - Supabase Authによるユーザー認証 (サインアップ、ログイン)
+           - ユーザーごとにアップロード動画と分析結果を関連付けて管理
+        5. ダッシュボード:
+           - ユーザーのアップロード動画一覧を表示
+           - 各動画の分析結果 (ランドマーク付き動画) へのリンク
+      - 技術スタック:
+        - 開発ツール: Windsurf
+        - フロントエンド: Next.js (React), TypeScript
+        - バックエンド: Supabase (Storage, PostgreSQLデータベース, Auth)
+        - デプロイ: Vercel
+        - ジェスチャー認識: MediaPipe Hands
+        - 動画処理: FFmpeg (または類似のライブラリ)
+        - 状態管理: Zustand (またはRecoil, Jotai)
+        - スタイリング: Tailwind CSS
+      - システム構成:
+        1. フロントエンド (Next.js):
+           - 動画アップロードUI
+           - ダッシュボード (動画一覧、分析結果へのリンク)
+           - Supabaseクライアントとの連携 (認証、データ取得、ストレージ操作)
+        2. バックエンド (Supabase):
+           - ユーザー認証 (Supabase Auth)
+           - ストレージ (Supabase Storage):
+             - アップロードされた動画の保存
+             - ランドマーク付き動画の保存
+           - データベース (PostgreSQL):
+             - usersテーブル: ユーザー情報
+             - videosテーブル: 動画情報 (ファイルパス、アップロード日時など)
+             - landmarksテーブル: ランドマークの時系列データ (動画ID、フレーム番号、座標)
+        3. Vercel:
+           - Next.jsアプリケーションのデプロイ
+           - Serverless Functions (API Routes):
+             - 動画処理 (MediaPipe Hands, ランドマーク描画, FFmpeg)
+             - Supabase Storageへの動画アップロード/ダウンロード
+      - エージェント選定理由:
+        claude-3-5-sonnet-20241022は、フロントエンド(Next.js, React, TypeScript)、
+        バックエンド(Supabase連携)、MediaPipe Handsの利用、動画処理の実装において高い能力を発揮するため。
+      - API選定理由:
+        - Supabase: 認証、データベース、ストレージ機能が統合されており、迅速な開発が可能。
+        - MediaPipe Hands: 高性能な手追跡をブラウザ上で実現できる。
+      ref: "ハンドジェスチャー認識 - tatsuya.miyazaki": MediaPipe Handsの利用と、
+        手のトラッキングに関する実装の参考として有用であるため。
+    dependency: []
+    agent: "claude-3-5-sonnet-20241022"
+    api: []
+  app:
+    dashboard:
+      page.tsx:
+        content: |-
+          ダッシュボードコンポーネント
+          - ユーザーのアップロード動画一覧を表示
+          - 各動画の分析結果 (ランドマーク付き動画) へのリンク
+          - 新しい動画をアップロードするボタン
+          - 認証状態の確認 (Supabase Auth)
+          - 未ログインの場合はログインページへリダイレクト
+          - データの取得:
+            * Supabaseからログインユーザーの動画情報を取得
+          - UI要素:
+            * 動画リスト (テーブル形式)
+            * 各動画のサムネイル
+            * 分析結果 (ランドマーク付き動画) へのリンク
+            * 動画アップロードボタン
+          - 状態管理:
+            * Zustand (またはRecoil, Jotai) でユーザーの動画データを管理
+          - スタイリング: Tailwind CSS
+          agent選定理由: claude-3-5-sonnet-20241022は、Next.jsのページコンポーネント、
+          Supabaseとの連携、UI構築、状態管理の実装に優れているため。
+        dependency:
+          - src/components/VideoList.tsx
+          - src/components/UploadVideoButton.tsx
+          - src/lib/supabase.ts
+        agent: "claude-3-5-sonnet-20241022"
+        api: []
+      
+    layout.tsx:
+      content: |-
+        アプリケーションのルートレイアウト
+        - ヘッダー、フッターなどの共通レイアウトを定義
+        - グローバルなスタイル設定 (Tailwind CSS)
+        - 状態管理プロバイダー (Zustand, Recoil, Jotai) の設定
+        - Supabaseクライアントの初期化とプロバイダーの設定
+        - 認証状態の監視とユーザー情報の取得 (Supabase Auth)
+        - UI要素:
+          * ヘッダー (アプリケーションタイトル、ナビゲーション)
+          * メインコンテンツ領域
+          * フッター (著作権表示など)
+        agent選定理由: claude-3-5-sonnet-20241022は、Next.jsのレイアウトコンポーネント、
+        グローバルなスタイル設定、状態管理プロバイダーの設定に優れているため。
+      dependency:
+        - src/components/Header.tsx
+        - src/components/Footer.tsx
+        - src/lib/supabase.ts
+        - src/providers/SupabaseProvider.tsx
+        - src/providers/StateProvider.tsx # Zustand, Recoil, Jotaiのいずれか
+      agent: "claude-3-5-sonnet-20241022"
+      api: []
+    page.tsx:
+      content: |-
+        トップページ (ランディングページ)
+        - アプリケーションの概要説明
+        - 主要機能の紹介 (動画アップロード、分析、結果表示)
+        - ユーザー登録/ログインへの導線
+        - デモ動画の表示
+        - UI要素:
+          * ヒーローセクション (キャッチコピー、メインビジュアル)
+          * 機能紹介セクション
+          * 登録/ログインボタン
+        - スタイリング: Tailwind CSS
+        agent選定理由: claude-3-5-sonnet-20241022は、Next.jsのページコンポーネント、
+        UI構築、スタイリングに優れているため。
+      dependency:
+        - src/components/HeroSection.tsx
+        - src/components/FeatureSection.tsx
+        - src/components/AuthButtons.tsx
+      agent: "claude-3-5-sonnet-20241022"
+      api: []
+    api:
+      process-video:
+        route.ts:
+          content: |-
+            動画処理APIエンドポイント
+            - POSTリクエストを受け付ける
+            - リクエストボディから動画ファイルを取得
+            - Supabase Storageに動画をアップロード
+            - MediaPipe Handsで動画を処理し、ランドマークを抽出
+            - ランドマーク情報をSupabase Databaseに保存
+            - ランドマークを描画した新しい動画を生成
+            - 生成された動画をSupabase Storageに保存
+            - 処理結果 (動画URL、ランドマークデータなど) をレスポンスとして返す
+            - 処理中にエラーが発生した場合はエラーレスポンスを返す
+            - 必要なライブラリ:
+              * @supabase/supabase-js
+              * @mediapipe/hands
+              * ffmpeg (または類似のライブラリ)
+            agent選定理由: claude-3-5-sonnet-20241022は、Next.jsのAPI Routes、
+            Supabaseとの連携、MediaPipe Handsの利用、動画処理 (FFmpeg) の実装に優れているため。
+          dependency:
+            - src/lib/supabase.ts
+            - src/utils/processVideo.ts
+          agent: "claude-3-5-sonnet-20241022"
+          api: []
+  components:
+    AuthButtons.tsx:
+      content: |-
+        認証関連ボタンコンポーネント (登録/ログイン)
+        - Supabase AuthのUIコンポーネントを使用
+        - ユーザーの認証状態に応じて表示を切り替え (ログイン/ログアウト)
+        - スタイリング: Tailwind CSS
+        agent選定理由: claude-3-5-sonnet-20241022は、Supabase Auth UIコンポーネントの
+        利用とスタイリングに優れているため。
+      dependency:
+        - src/lib/supabase.ts
+      agent: "claude-3-5-sonnet-20241022"
+      api: []
+    Footer.tsx:
+      content: |-
+        フッターコンポーネント
+        - 著作権表示
+        - リンク (プライバシーポリシー、利用規約など)
+        - スタイリング: Tailwind CSS
+        agent選定理由: claude-3-5-sonnet-20241022は、UI構築とスタイリングに優れているため。
+      dependency: []
+      agent: "claude-3-5-sonnet-20241022"
+      api: []
+    Header.tsx:
+      content: |-
+        ヘッダーコンポーネント
+        - アプリケーションタイトル
+        - ナビゲーション (ダッシュボード、ログアウトなど)
+        - ユーザー情報 (ログイン状態の場合)
+        - Supabase Authの状態に応じて表示を切り替え
+        - UI要素:
+          * ロゴ
+          * ナビゲーションリンク
+          * ユーザーアイコン/アバター
+        - スタイリング: Tailwind CSS
+        agent選定理由: claude-3-5-sonnet-20241022は、UI構築、Supabase Authとの連携、
+        スタイリングに優れているため。
+      dependency:
+        - src/lib/supabase.ts
+      agent: "claude-3-5-sonnet-20241022"
+      api: []
+    HeroSection.tsx:
+      content: |-
+        ヒーローセクションコンポーネント (トップページ用)
+        - キャッチコピー
+        - メインビジュアル (画像/動画)
+        - アプリケーションの簡単な説明
+        - スタイリング: Tailwind CSS
+        agent選定理由: claude-3-5-sonnet-20241022は、UI構築とスタイリングに優れているため。
+      dependency: []
+      agent: "claude-3-5-sonnet-20241022"
+      api: []
+    UploadVideoButton.tsx:
+      content: |-
+        動画アップロードボタンコンポーネント
+        - ファイル選択ダイアログを開く
+        - 選択された動画ファイルを`api/process-video`にPOSTリクエストで送信
+        - アップロードの進捗状況を表示 (プログレスバー)
+        - 処理完了後、ダッシュボードを更新
+        - UI要素:
+          * ボタン (shadcn/uiのButtonコンポーネント)
+          * プログレスバー (shadcn/uiのProgressコンポーネント)
+        - スタイリング: Tailwind CSS
+        agent選定理由: claude-3-5-sonnet-20241022は、UI構築 (shadcn/uiの利用)、
+        ファイルアップロード処理、スタイリングに優れているため。
+      dependency:
+        - src/app/api/process-video/route.ts
+      agent: "claude-3-5-sonnet-20241022"
+      api: []
+    VideoList.tsx:
+      content: |-
+        動画リストコンポーネント
+        - ユーザーの動画データをテーブル形式で表示
+        - 各動画のサムネイル
+        - 分析結果 (ランドマーク付き動画) へのリンク
+        - データの取得:
+          * 親コンポーネント (dashboard/page.tsx) からpropsとして受け取る
+        - UI要素:
+          * テーブル (shadcn/uiのTableコンポーネント)
+          * 各行に動画情報 (名前、アップロード日時など)
+          * サムネイル画像
+          * 分析結果動画へのリンク (再生可能なvideo要素)
+        - スタイリング: Tailwind CSS
+        agent選定理由: claude-3-5-sonnet-20241022は、UI構築 (shadcn/uiの利用)、
+        データ表示、スタイリングに優れているため。
+      dependency: []
+      agent: "claude-3-5-sonnet-20241022"
+      api: []
+  lib:
+    supabase.ts:
+      content: |-
+        Supabaseクライアント設定ファイル
+        - SupabaseプロジェクトのURLとanon keyを設定
+        - Supabaseクライアントインスタンスを作成
+        - 認証状態の変更を監視するリスナーを設定
+        - ユーザー情報を取得する関数を定義
+        agent選定理由: claude-3-5-sonnet-20241022は、Supabaseクライアントの
+        設定と初期化、認証関連の処理の実装に優れているため。
+      dependency: []
+      agent: "claude-3-5-sonnet-20241022"
+      api: []
+  providers:
+    SupabaseProvider.tsx:
+      content: |-
+        Supabaseクライアントのプロバイダーコンポーネント
+        - Supabaseクライアントをコンテキストに格納
+        - アプリケーション全体でSupabaseクライアントを利用可能にする
+        - 認証状態の変更を監視し、ユーザー情報をコンテキストに反映
+        agent選定理由: claude-3-5-sonnet-20241022は、Reactコンテキストの
+        利用とSupabaseクライアントの統合に優れているため。
+      dependency:
+        - src/lib/supabase.ts
+      agent: "claude-3-5-sonnet-20241022"
+      api: []
+    StateProvider.tsx:
+      content: |-
+        状態管理プロバイダーコンポーネント (Zustand, Recoil, Jotaiのいずれか)
+        - グローバルな状態をコンテキストに格納
+        - アプリケーション全体で状態を共有・更新可能にする
+        - 選択した状態管理ライブラリに応じて実装が異なる
+        agent選定理由: claude-3-5-sonnet-20241022は、Reactコンテキストの利用と
+        状態管理ライブラリの統合に優れているため。
+      dependency: []
+      agent: "claude-3-5-sonnet-20241022"
+      api: []
+  middleware.ts:
+    content: |-
+      Next.js Middleware
+      - 認証が必要なルートへのアクセスを制御
+      - 未認証ユーザーをログインページへリダイレクト
+      - Supabase Authのセッション情報を確認
+      agent選定理由: claude-3-5-sonnet-20241022はNext.js Middlewareの実装と
+      Supabase Authとの連携に優れているため。
+    dependency:
+      - src/lib/supabase.ts
+    agent: "claude-3-5-sonnet-20241022"
+    api: []
+  utils:
+    processVideo.ts:
+      content: |-
+        動画処理関数 (バックエンド)
+        - 入力: 動画ファイル (Blob)
+        - 出力: ランドマーク付き動画のURL、ランドマークデータ
+        - 処理内容:
+          1. Supabase Storageに動画をアップロード
+          2. MediaPipe Handsで動画を処理:
+             - 各フレームのランドマークを抽出
+             - ランドマークをフレームに描画
+          3. ランドマークデータをSupabase Databaseに保存
+          4. 描画済みのフレームを結合して新しい動画を生成 (FFmpeg)
+          5. 生成された動画をSupabase Storageに保存
+          6. 動画URLとランドマークデータを返す
+        - 必要なライブラリ:
+          * @supabase/supabase-js
+          * @mediapipe/hands
+          * ffmpeg (または類似のライブラリ)
+        agent選定理由: claude-3-5-sonnet-20241022は、MediaPipe Handsの利用、
+        動画処理 (FFmpeg)、Supabase Storage/Databaseとの連携に優れているため。
+      dependency:
+        - src/lib/supabase.ts
+      agent: "claude-3-5-sonnet-20241022"
+      api: []
