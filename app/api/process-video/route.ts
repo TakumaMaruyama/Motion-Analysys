@@ -54,8 +54,8 @@ export async function POST(request: Request) {
   }
 }
 
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
+export const runtime = 'edge';
+export const maxDuration = 300;
+
+// ファイルアップロードを処理するための設定
+export const dynamic = 'force-dynamic';
