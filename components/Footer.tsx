@@ -1,11 +1,12 @@
 "use client";
 
 import React from 'react';
+import { Separator } from '@/components/ui/separator';
 
 const Footer: React.FC = () => {
   return (
     <footer className="w-full bg-[#1a1a1a] text-[#ffffff] py-8">
-      <div className="max-w-[800px] mx-auto px-6">
+      <div className="max-w-7xl mx-auto px-4">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           <div>
             <h3 className="text-lg font-semibold mb-4">ハンドジェスチャー分析</h3>
@@ -45,7 +46,7 @@ const Footer: React.FC = () => {
           </div>
         </div>
         
-        <hr className="my-6 border-[#333333]" />
+        <Separator className="my-6 bg-[#333333]" />
         
         <div className="text-center text-sm text-[#cccccc]">
           2024 ハンドジェスチャー分析. All rights reserved.

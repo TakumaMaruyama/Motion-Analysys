@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useState } from 'react';
-import { Button } from '@/components/ui/button';
+import React from 'react';
 import AuthButtons from '@/components/AuthButtons';
 
 const Header: React.FC = () => {
