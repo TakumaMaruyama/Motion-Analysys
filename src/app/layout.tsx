@@ -1,8 +1,8 @@
 import React from 'react';
-import { Header } from '../components/Header';
-import { Footer } from '../components/Footer';
-import { SupabaseProvider } from '../providers/SupabaseProvider';
-import { StateProvider } from '../providers/StateProvider';
+import Header from '@/components/Header';
+import Footer from '@/components/Footer';
+import SupabaseProvider from '@/providers/SupabaseProvider';
+import StateProvider from '@/providers/StateProvider';
 
 const RootLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
