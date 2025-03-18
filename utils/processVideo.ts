@@ -1,19 +1,20 @@
 import { createClient } from '@supabase/supabase-js';
 import { Pose } from '@mediapipe/pose';
-import { drawConnectors, drawLandmarks, DrawingOptions } from '@mediapipe/drawing_utils';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 
 const ffmpeg = new FFmpeg();
 
-// 骨格線の接続を定義
+// 全身の主要な骨格線の接続を定義
 const POSE_CONNECTIONS = [
+  // 上半身
   [11, 12], // 肩
   [11, 13], [13, 15], // 左腕
   [12, 14], [14, 16], // 右腕
   [11, 23], [12, 24], // 胴体
+  // 下半身
   [23, 24], // 腰
-  [23, 25], [25, 27], // 左脚
-  [24, 26], [26, 28], // 右脚
+  [23, 25], [25, 27], [27, 29], [29, 31], // 左脚
+  [24, 26], [26, 28], [28, 30], [30, 32]  // 右脚
 ];
 
 interface LandmarkData {
@@ -38,16 +39,16 @@ export async function processVideo(videoBlob: Blob) {
 
   if (uploadError) throw new Error('動画のアップロードに失敗しました');
 
-  // MediaPipe Poseの初期化
+  // MediaPipe Poseの初期化（全身検出に最適化）
   const pose = new Pose({
     locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
   });
 
   pose.setOptions({
-    modelComplexity: 1,
+    modelComplexity: 2, // より高精度なモデルを使用
     smoothLandmarks: true,
-    minDetectionConfidence: 0.5,
-    minTrackingConfidence: 0.5
+    minDetectionConfidence: 0.7, // 検出の信頼度を上げる
+    minTrackingConfidence: 0.7
   });
 
   // 動画からフレームを抽出してランドマークを検出
@@ -74,9 +75,11 @@ export async function processVideo(videoBlob: Blob) {
     video.play();
 
     pose.onResults((results) => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(video, 0, 0);
       
       if (results.poseLandmarks) {
+        // ランドマークデータを保存
         landmarkData.push({
           frame: frameCount,
           landmarks: results.poseLandmarks.map(l => ({
@@ -87,27 +90,29 @@ export async function processVideo(videoBlob: Blob) {
           }))
         });
 
-        // 骨格線を描画
+        // 骨格線を描画（高い可視性のみ）
         for (const [start, end] of POSE_CONNECTIONS) {
           const startLandmark = results.poseLandmarks[start];
           const endLandmark = results.poseLandmarks[end];
           
           if (startLandmark?.visibility && endLandmark?.visibility &&
-              startLandmark.visibility > 0.5 && endLandmark.visibility > 0.5) {
+              startLandmark.visibility > 0.7 && endLandmark.visibility > 0.7) {
             ctx.beginPath();
             ctx.moveTo(startLandmark.x * canvas.width, startLandmark.y * canvas.height);
             ctx.lineTo(endLandmark.x * canvas.width, endLandmark.y * canvas.height);
             ctx.strokeStyle = '#00FF00';
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 3;
             ctx.stroke();
           }
         }
 
-        // ランドマークを描画
+        // 主要な関節ポイントを描画
         results.poseLandmarks.forEach((landmark, index) => {
-          if (landmark.visibility && landmark.visibility > 0.5) {
+          // 主要な関節のインデックスのみ描画
+          const majorJoints = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32];
+          if (majorJoints.includes(index) && landmark.visibility && landmark.visibility > 0.7) {
             ctx.beginPath();
-            ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, 5, 0, 2 * Math.PI);
+            ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, 6, 0, 2 * Math.PI);
             ctx.fillStyle = '#FF0000';
             ctx.fill();
           }
