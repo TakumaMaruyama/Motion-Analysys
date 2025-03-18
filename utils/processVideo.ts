@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
-import { Hands } from '@mediapipe/hands';
+import { Pose } from '@mediapipe/pose';
+import { drawConnectors, drawLandmarks } from '@mediapipe/drawing_utils';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 
 const ffmpeg = new FFmpeg();
@@ -10,6 +11,7 @@ interface LandmarkData {
     x: number;
     y: number;
     z: number;
+    visibility?: number;
   }[];
 }
 
@@ -25,14 +27,14 @@ export async function processVideo(videoBlob: Blob) {
 
   if (uploadError) throw new Error('動画のアップロードに失敗しました');
 
-  // MediaPipe Handsの初期化
-  const hands = new Hands({
-    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+  // MediaPipe Poseの初期化
+  const pose = new Pose({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
   });
 
-  hands.setOptions({
-    maxNumHands: 2,
+  pose.setOptions({
     modelComplexity: 1,
+    smoothLandmarks: true,
     minDetectionConfidence: 0.5,
     minTrackingConfidence: 0.5
   });
@@ -49,34 +51,72 @@ export async function processVideo(videoBlob: Blob) {
 
   const landmarkData: LandmarkData[] = [];
   const processedFrames: ImageData[] = [];
+  
+  // 動画の処理を Promise でラップ
+  await new Promise<void>((resolve) => {
+    let frameCount = 0;
+    const fps = 30;
+    const duration = video.duration;
+    const totalFrames = Math.floor(duration * fps);
 
-  hands.onResults((results) => {
-    ctx.drawImage(video, 0, 0);
-    
-    if (results.multiHandLandmarks) {
-      results.multiHandLandmarks.forEach(landmarks => {
+    video.currentTime = 0;
+    video.play();
+
+    pose.onResults((results) => {
+      ctx.drawImage(video, 0, 0);
+      
+      if (results.poseLandmarks) {
         landmarkData.push({
-          frame: video.currentTime * 30, // 30fpsと仮定
-          landmarks: landmarks.map(l => ({ x: l.x, y: l.y, z: l.z }))
+          frame: frameCount,
+          landmarks: results.poseLandmarks.map(l => ({
+            x: l.x,
+            y: l.y,
+            z: l.z,
+            visibility: l.visibility
+          }))
         });
 
         // ランドマークを描画
-        landmarks.forEach((landmark, index) => {
-          ctx.beginPath();
-          ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, 5, 0, 2 * Math.PI);
-          ctx.fillStyle = '#FF0000';
-          ctx.fill();
+        results.poseLandmarks.forEach((landmark) => {
+          if (landmark.visibility && landmark.visibility > 0.5) {
+            ctx.beginPath();
+            ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, 5, 0, 2 * Math.PI);
+            ctx.fillStyle = '#00FF00';
+            ctx.fill();
+          }
         });
-      });
-    }
 
-    processedFrames.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+        // 骨格線を描画
+        drawConnectors(ctx, results.poseLandmarks, {
+          color: '#00FF00',
+          lineWidth: 2
+        });
+        drawLandmarks(ctx, results.poseLandmarks, {
+          color: '#FF0000',
+          lineWidth: 1,
+          radius: 3
+        });
+      }
+
+      processedFrames.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+      frameCount++;
+
+      if (frameCount >= totalFrames) {
+        video.pause();
+        resolve();
+      } else {
+        video.currentTime = frameCount / fps;
+      }
+    });
+
+    // 最初のフレームを処理
+    pose.send({image: video});
   });
 
   // FFmpegを使用して新しい動画を生成
   await ffmpeg.load();
   
-  const frames = processedFrames.map((frame, index) => {
+  const frames = processedFrames.map((frame) => {
     const tempCanvas = document.createElement('canvas');
     tempCanvas.width = canvas.width;
     tempCanvas.height = canvas.height;
