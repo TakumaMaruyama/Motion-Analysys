@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { Pose } from '@mediapipe/pose';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { fetchFile } from '@ffmpeg/util';
 
 const ffmpeg = new FFmpeg();
 
@@ -28,154 +29,203 @@ interface LandmarkData {
 }
 
 export async function processVideo(videoBlob: Blob) {
-  const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
-  
-  // Supabaseに元の動画をアップロード
-  const timestamp = Date.now();
-  const originalFileName = `original_${timestamp}.mp4`;
-  const { data: uploadData, error: uploadError } = await supabase.storage
-    .from('videos')
-    .upload(originalFileName, videoBlob);
+  console.log('処理開始:', videoBlob.size, 'bytes');
 
-  if (uploadError) throw new Error('動画のアップロードに失敗しました');
+  try {
+    // 1. 動画の基本情報を取得
+    const videoObjectUrl = URL.createObjectURL(videoBlob);
+    const video = document.createElement('video');
+    video.src = videoObjectUrl;
+    
+    // 動画のメタデータをロード
+    await new Promise<void>((resolve, reject) => {
+      video.onloadedmetadata = () => resolve();
+      video.onerror = (e) => reject(new Error('動画メタデータの読み込みに失敗しました'));
+      video.load();
+    });
+    
+    console.log('動画サイズ:', video.videoWidth, 'x', video.videoHeight);
+    console.log('動画長さ:', video.duration, '秒');
 
-  // MediaPipe Poseの初期化（全身検出に最適化）
-  const pose = new Pose({
-    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-  });
+    // 2. キャンバスの準備
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d')!;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
 
-  pose.setOptions({
-    modelComplexity: 2, // より高精度なモデルを使用
-    smoothLandmarks: true,
-    minDetectionConfidence: 0.7, // 検出の信頼度を上げる
-    minTrackingConfidence: 0.7
-  });
+    // 3. MediaPipe Poseの初期化
+    console.log('Poseモデルを初期化中...');
+    const pose = new Pose({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`
+    });
 
-  // 動画からフレームを抽出してランドマークを検出
-  const video = document.createElement('video');
-  video.src = URL.createObjectURL(videoBlob);
-  await video.load();
+    await new Promise<void>((resolve) => {
+      pose.onResults(() => resolve()); // モデルの初期化を確認
+    });
 
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d')!;
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
+    pose.setOptions({
+      modelComplexity: 1, // 処理速度とのバランスを取る
+      smoothLandmarks: true,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
+    });
 
-  const landmarkData: LandmarkData[] = [];
-  const processedFrames: ImageData[] = [];
-  
-  // 動画の処理を Promise でラップ
-  await new Promise<void>((resolve) => {
-    let frameCount = 0;
-    const fps = 30;
-    const duration = video.duration;
-    const totalFrames = Math.floor(duration * fps);
+    console.log('フレーム処理を開始...');
+    
+    // 4. フレーム処理
+    const landmarkData: LandmarkData[] = [];
+    const frames: string[] = []; // データURLとして保存
+    
+    // フレーム処理関数
+    const processFrame = async (currentTime: number): Promise<boolean> => {
+      return new Promise<boolean>((resolve) => {
+        video.currentTime = currentTime;
+        
+        video.onseeked = async () => {
+          // 現在のフレームを描画
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(video, 0, 0);
+          
+          // ポーズ検出
+          await pose.send({image: canvas});
+          
+          // フレームを保存
+          frames.push(canvas.toDataURL('image/jpeg', 0.9));
+          resolve(true);
+        };
+      });
+    };
 
-    video.currentTime = 0;
-    video.play();
-
+    // ポーズ検出結果のハンドラ
     pose.onResults((results) => {
+      if (!results.poseLandmarks) return;
+      
+      // ランドマークデータを保存
+      const frameIndex = frames.length - 1;
+      landmarkData.push({
+        frame: frameIndex,
+        landmarks: results.poseLandmarks.map(l => ({
+          x: l.x,
+          y: l.y,
+          z: l.z,
+          visibility: l.visibility
+        }))
+      });
+      
+      // 動画フレームを描画
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(video, 0, 0);
       
-      if (results.poseLandmarks) {
-        // ランドマークデータを保存
-        landmarkData.push({
-          frame: frameCount,
-          landmarks: results.poseLandmarks.map(l => ({
-            x: l.x,
-            y: l.y,
-            z: l.z,
-            visibility: l.visibility
-          }))
-        });
-
-        // 骨格線を描画（高い可視性のみ）
-        for (const [start, end] of POSE_CONNECTIONS) {
-          const startLandmark = results.poseLandmarks[start];
-          const endLandmark = results.poseLandmarks[end];
-          
-          if (startLandmark?.visibility && endLandmark?.visibility &&
-              startLandmark.visibility > 0.7 && endLandmark.visibility > 0.7) {
-            ctx.beginPath();
-            ctx.moveTo(startLandmark.x * canvas.width, startLandmark.y * canvas.height);
-            ctx.lineTo(endLandmark.x * canvas.width, endLandmark.y * canvas.height);
-            ctx.strokeStyle = '#00FF00';
-            ctx.lineWidth = 3;
-            ctx.stroke();
-          }
+      // 骨格線を描画
+      for (const [start, end] of POSE_CONNECTIONS) {
+        const startLandmark = results.poseLandmarks[start];
+        const endLandmark = results.poseLandmarks[end];
+        
+        if (startLandmark?.visibility && endLandmark?.visibility &&
+            startLandmark.visibility > 0.7 && endLandmark.visibility > 0.7) {
+          ctx.beginPath();
+          ctx.moveTo(startLandmark.x * canvas.width, startLandmark.y * canvas.height);
+          ctx.lineTo(endLandmark.x * canvas.width, endLandmark.y * canvas.height);
+          ctx.strokeStyle = '#00FF00';
+          ctx.lineWidth = 3;
+          ctx.stroke();
         }
-
-        // 主要な関節ポイントを描画
-        results.poseLandmarks.forEach((landmark, index) => {
-          // 主要な関節のインデックスのみ描画
-          const majorJoints = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32];
-          if (majorJoints.includes(index) && landmark.visibility && landmark.visibility > 0.7) {
-            ctx.beginPath();
-            ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, 6, 0, 2 * Math.PI);
-            ctx.fillStyle = '#FF0000';
-            ctx.fill();
-          }
-        });
       }
-
-      processedFrames.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
-      frameCount++;
-
-      if (frameCount >= totalFrames) {
-        video.pause();
-        resolve();
-      } else {
-        video.currentTime = frameCount / fps;
-      }
+      
+      // 主要な関節ポイントを描画
+      results.poseLandmarks.forEach((landmark, index) => {
+        const majorJoints = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32];
+        if (majorJoints.includes(index) && landmark.visibility && landmark.visibility > 0.7) {
+          ctx.beginPath();
+          ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, 6, 0, 2 * Math.PI);
+          ctx.fillStyle = '#FF0000';
+          ctx.fill();
+        }
+      });
+      
+      // 現在のキャンバスを保存（上書き）
+      frames[frameIndex] = canvas.toDataURL('image/jpeg', 0.9);
     });
 
-    // 最初のフレームを処理
-    pose.send({image: video});
-  });
+    // フレームを等間隔で処理
+    const fps = 5; // パフォーマンスを考慮して低いフレームレートに設定
+    const duration = video.duration;
+    const frameCount = Math.min(30, Math.floor(duration * fps)); // 最大30フレームに制限
+    const timeStep = duration / frameCount;
+    
+    console.log(`処理フレーム数: ${frameCount}, 間隔: ${timeStep}秒`);
+    
+    for (let i = 0; i < frameCount; i++) {
+      await processFrame(i * timeStep);
+      console.log(`フレーム ${i+1}/${frameCount} 処理完了`);
+    }
 
-  // FFmpegを使用して新しい動画を生成
-  await ffmpeg.load();
-  
-  const frames = processedFrames.map((frame) => {
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = canvas.width;
-    tempCanvas.height = canvas.height;
-    tempCanvas.getContext('2d')!.putImageData(frame, 0, 0);
-    return tempCanvas.toDataURL('image/jpeg');
-  });
-
-  // フレームを結合して新しい動画を生成
-  const processedFileName = `processed_${timestamp}.mp4`;
-  await ffmpeg.writeFile('frames.txt', frames.join('\n'));
-  await ffmpeg.exec([
-    '-f', 'concat',
-    '-i', 'frames.txt',
-    '-c:v', 'libx264',
-    '-pix_fmt', 'yuv420p',
-    processedFileName
-  ]);
-
-  const processedVideoData = await ffmpeg.readFile(processedFileName);
-  const processedVideoBlob = new Blob([processedVideoData], { type: 'video/mp4' });
-
-  // 処理済み動画をSupabaseにアップロード
-  const { data: processedData, error: processedError } = await supabase.storage
-    .from('videos')
-    .upload(processedFileName, processedVideoBlob);
-
-  if (processedError) throw new Error('処理済み動画のアップロードに失敗しました');
-
-  // ランドマークデータをデータベースに保存
-  const { error: dbError } = await supabase
-    .from('landmarks')
-    .insert({ video_id: timestamp, data: landmarkData });
-
-  if (dbError) throw new Error('ランドマークデータの保存に失敗しました');
-
-  return {
-    originalUrl: supabase.storage.from('videos').getPublicUrl(originalFileName).data.publicUrl,
-    processedUrl: supabase.storage.from('videos').getPublicUrl(processedFileName).data.publicUrl,
-    landmarkData
-  };
+    // 5. 処理済み動画の作成 (クライアントサイドのみ)
+    console.log('処理済みフレーム数:', frames.length);
+    
+    // 処理済みのフレームから動画をキャプチャ
+    const processedVideo = document.createElement('video');
+    const captureCanvas = document.createElement('canvas');
+    const captureCtx = captureCanvas.getContext('2d')!;
+    captureCanvas.width = video.videoWidth;
+    captureCanvas.height = video.videoHeight;
+    
+    // キャプチャ開始前にフレームを読み込む
+    const loadFrameImage = (dataUrl: string): Promise<HTMLImageElement> => {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.src = dataUrl;
+      });
+    };
+    
+    // MediaRecorderでキャプチャ
+    const chunks: Blob[] = [];
+    const mediaRecorder = new MediaRecorder(captureCanvas.captureStream(fps), {
+      mimeType: 'video/webm;codecs=vp9',
+      videoBitsPerSecond: 3000000
+    });
+    
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        chunks.push(e.data);
+      }
+    };
+    
+    let processedVideoUrl: string;
+    
+    await new Promise<void>(async (resolve) => {
+      mediaRecorder.onstop = () => {
+        const processedBlob = new Blob(chunks, { type: 'video/webm' });
+        processedVideoUrl = URL.createObjectURL(processedBlob);
+        resolve();
+      };
+      
+      mediaRecorder.start();
+      
+      // フレームを順番に表示
+      for (const frameDataUrl of frames) {
+        const img = await loadFrameImage(frameDataUrl);
+        captureCtx.clearRect(0, 0, captureCanvas.width, captureCanvas.height);
+        captureCtx.drawImage(img, 0, 0, captureCanvas.width, captureCanvas.height);
+        await new Promise(r => setTimeout(r, 1000 / fps));
+      }
+      
+      mediaRecorder.stop();
+    });
+    
+    console.log('動画処理完了');
+    
+    // リソースを解放
+    URL.revokeObjectURL(videoObjectUrl);
+    
+    return {
+      processedUrl: processedVideoUrl!,
+      landmarkData
+    };
+    
+  } catch (error) {
+    console.error('動画処理エラー:', error);
+    throw error;
+  }
 }
