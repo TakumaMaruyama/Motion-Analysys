@@ -66,8 +66,8 @@ export async function processVideo(videoBlob: Blob) {
     pose.setOptions({
       modelComplexity: 1, // 処理速度とのバランスを取る
       smoothLandmarks: true,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7
+      minDetectionConfidence: 0.5, // 速い動きを検出しやすくするために閾値を下げる
+      minTrackingConfidence: 0.5  // 速い動きを追従しやすくするために閾値を下げる
     });
 
     console.log('フレーム処理を開始...');
@@ -122,7 +122,7 @@ export async function processVideo(videoBlob: Blob) {
         const endLandmark = results.poseLandmarks[end];
         
         if (startLandmark?.visibility && endLandmark?.visibility &&
-            startLandmark.visibility > 0.7 && endLandmark.visibility > 0.7) {
+            startLandmark.visibility > 0.5 && endLandmark.visibility > 0.5) {
           ctx.beginPath();
           ctx.moveTo(startLandmark.x * canvas.width, startLandmark.y * canvas.height);
           ctx.lineTo(endLandmark.x * canvas.width, endLandmark.y * canvas.height);
@@ -135,7 +135,7 @@ export async function processVideo(videoBlob: Blob) {
       // 主要な関節ポイントを描画
       results.poseLandmarks.forEach((landmark, index) => {
         const majorJoints = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32];
-        if (majorJoints.includes(index) && landmark.visibility && landmark.visibility > 0.7) {
+        if (majorJoints.includes(index) && landmark.visibility && landmark.visibility > 0.5) {
           ctx.beginPath();
           ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, 6, 0, 2 * Math.PI);
           ctx.fillStyle = '#FF0000';
@@ -148,9 +148,9 @@ export async function processVideo(videoBlob: Blob) {
     });
 
     // フレームを等間隔で処理
-    const fps = 5; // パフォーマンスを考慮して低いフレームレートに設定
+    const fps = 24; // 元動画と同じ速さにするため、標準的な動画フレームレートに設定
     const duration = video.duration;
-    const frameCount = Math.min(30, Math.floor(duration * fps)); // 最大30フレームに制限
+    const frameCount = Math.floor(duration * fps); // フレーム数の制限を撤廃
     const timeStep = duration / frameCount;
     
     console.log(`処理フレーム数: ${frameCount}, 間隔: ${timeStep}秒`);
@@ -181,7 +181,7 @@ export async function processVideo(videoBlob: Blob) {
     
     // MediaRecorderでキャプチャ
     const chunks: Blob[] = [];
-    const mediaRecorder = new MediaRecorder(captureCanvas.captureStream(fps), {
+    const mediaRecorder = new MediaRecorder(captureCanvas.captureStream(video.videoWidth), {
       mimeType: 'video/webm;codecs=vp9',
       videoBitsPerSecond: 3000000
     });
