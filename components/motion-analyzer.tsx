@@ -135,8 +135,9 @@ const detectMovementLandmarks = (
       let diffSum = 0;
       let pixelCount = 0;
       
-      for (let y = region.startY; y < region.endY; y += 10) { // 10ピクセルごとにサンプリング（パフォーマンス向上）
-        for (let x = region.startX; x < region.endX; x += 10) {
+      // サンプリング間隔を小さくして、より細かい動きを検出（10ピクセルから5ピクセルに）
+      for (let y = region.startY; y < region.endY; y += 5) { 
+        for (let x = region.startX; x < region.endX; x += 5) {
           const idx = (y * width + x) * 4;
           
           // RGBの差分
@@ -161,20 +162,23 @@ const detectMovementLandmarks = (
     downMovement = regionDiff(bottomRegion);
     
     // 動きの大きさに応じて関節の位置を調整
-    // しきい値（差分がこの値より大きい場合に動きとみなす）
-    const movementThreshold = 5;
+    // しきい値（差分がこの値より大きい場合に動きとみなす）- 感度をさらに向上
+    const movementThreshold = 2; // 3から2に変更してさらに感度を上げる
     
-    // 動きに応じた調整量
+    // 動きに応じた調整量 - 感度をさらに向上
     const adjustX = (leftMovement > movementThreshold || rightMovement > movementThreshold) 
-      ? (rightMovement - leftMovement) * 0.05 // 左右の動きの差に基づいて調整
+      ? (rightMovement - leftMovement) * 0.1 // 左右の動きの差に基づいて調整 - 0.08→0.1に増加
       : Math.sin(currentFrame * 0.05) * 3; // 既存のアニメーション（微小）
       
     const adjustY = (upMovement > movementThreshold || downMovement > movementThreshold)
-      ? (downMovement - upMovement) * 0.05 // 上下の動きの差に基づいて調整
+      ? (downMovement - upMovement) * 0.1 // 上下の動きの差に基づいて調整 - 0.08→0.1に増加
       : Math.cos(currentFrame * 0.04) * 2; // 既存のアニメーション（微小）
     
     // 動きの大きさ（全体の動き）
     const movementMagnitude = (leftMovement + rightMovement + upMovement + downMovement) / 4;
+    
+    // 速い動きの場合は調整係数を増加させる
+    const speedFactor = movementMagnitude > movementThreshold * 3 ? 1.5 : 1.0;
     
     // 各ランドマークの位置を動きに合わせて調整
     return baseLandmarks.map(landmark => {
@@ -184,26 +188,26 @@ const detectMovementLandmarks = (
       
       // 体の左側
       if (landmark.name.includes('left')) {
-        xAdjust = -adjustX * 1.5;
+        xAdjust = -adjustX * 1.5 * speedFactor;
         // 腕の場合はさらに大きな動き
-        if (landmark.name.includes('wrist')) xAdjust *= 2;
-        if (landmark.name.includes('elbow')) xAdjust *= 1.5;
+        if (landmark.name.includes('wrist')) xAdjust *= 2.5; // 2から2.5に増加
+        if (landmark.name.includes('elbow')) xAdjust *= 2; // 1.5から2に増加
       }
       // 体の右側
       else if (landmark.name.includes('right')) {
-        xAdjust = adjustX * 1.5;
+        xAdjust = adjustX * 1.5 * speedFactor;
         // 腕の場合はさらに大きな動き
-        if (landmark.name.includes('wrist')) xAdjust *= 2;
-        if (landmark.name.includes('elbow')) xAdjust *= 1.5;
+        if (landmark.name.includes('wrist')) xAdjust *= 2.5; // 2から2.5に増加
+        if (landmark.name.includes('elbow')) xAdjust *= 2; // 1.5から2に増加
       }
       
       // 上半身
       if (landmark.name.includes('head') || landmark.name.includes('shoulder')) {
-        yAdjust = -adjustY * 1.2;
+        yAdjust = -adjustY * 1.5 * speedFactor; // 1.2から1.5に増加
       }
       // 下半身
       else if (landmark.name.includes('ankle') || landmark.name.includes('knee')) {
-        yAdjust = adjustY * 1.2;
+        yAdjust = adjustY * 1.5 * speedFactor; // 1.2から1.5に増加
       }
       
       // 動きの大きさによって可視性を調整（動きが少ない部分は信頼性が低い）
@@ -522,9 +526,9 @@ export function MotionAnalyzer() {
     // フレーム情報を描画
     drawFrameInfo(ctx);
     
-    // 処理済みフレームを保存（メモリ使用量を考慮して最大300フレームまで）
-    // 10フレームごとに保存して、メモリ使用量を削減
-    if (currentFrameRef.current % 10 === 0 && processedFramesRef.current.length < 300) {
+    // すべてのフレームを保存 - 高品質な出力のため
+    // ただしメモリ使用量の上限を考慮
+    if (processedFramesRef.current.length < 1500) {
       try {
         const imageData = ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
         processedFramesRef.current.push(imageData);
@@ -779,8 +783,8 @@ export function MotionAnalyzer() {
     
     // 最後の処理時間を記録
     let lastProcessTime = 0;
-    // 目標フレームレート（高すぎるとブラウザがフリーズする可能性がある）
-    const targetFPS = 24;
+    // 目標フレームレート（動画と同期するために高めに設定）
+    const targetFPS = 30; // 24から30に変更
     // フレーム間の最小時間（ミリ秒）
     const frameInterval = 1000 / targetFPS;
     
@@ -1057,7 +1061,7 @@ export function MotionAnalyzer() {
   
   // 処理済み動画を生成する
   const createProcessedVideo = async () => {
-    if (!canvasRef.current || processedFramesRef.current.length === 0) {
+    if (!canvasRef.current || processedFramesRef.current.length === 0 || !videoRef.current) {
       setError('動画フレームがありません');
       return;
     }
@@ -1066,12 +1070,48 @@ export function MotionAnalyzer() {
       setIsCreatingVideo(true);
       setProgress('ランドマーク付き動画を生成中...');
       
-      // キャンバスストリームを取得
-      const stream = canvasRef.current.captureStream(30); // 30fpsでストリーム作成
+      // 元の動画の情報を取得
+      const originalDuration = videoRef.current.duration;
+      const totalFrames = processedFramesRef.current.length;
+      const originalVideoFPS = videoRef.current.videoWidth > 0 ? frameCount / originalDuration : 30;
+      
+      console.log(`元動画情報: 長さ=${originalDuration.toFixed(2)}秒, 録画FPS=${originalVideoFPS.toFixed(2)}, 保存フレーム=${totalFrames}`);
+      
+      // 出力キャンバスを設定（高解像度に）
+      if (!outputCanvasRef.current) {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvasRef.current.width;
+        canvas.height = canvasRef.current.height;
+        outputCanvasRef.current = canvas;
+      } else {
+        outputCanvasRef.current.width = canvasRef.current.width;
+        outputCanvasRef.current.height = canvasRef.current.height;
+      }
+      
+      const outputCtx = outputCanvasRef.current.getContext('2d', {
+        alpha: false,
+        desynchronized: false,
+        willReadFrequently: true
+      });
+      
+      if (!outputCtx) {
+        throw new Error('出力用キャンバスのコンテキストを取得できませんでした');
+      }
+      
+      // 高品質な出力設定
+      outputCtx.imageSmoothingEnabled = true;
+      outputCtx.imageSmoothingQuality = 'high';
+      
+      // 元の動画とできるだけ同じフレームレートで出力する
+      const exactTargetFPS = totalFrames / originalDuration;
+      const targetFPS = Math.min(30, exactTargetFPS);
+      
+      console.log(`出力設定: FPS=${targetFPS.toFixed(2)}, 元のFPS=${exactTargetFPS.toFixed(2)}`);
       
       // 対応しているコーデックを確認
       const mimeTypes = [
         'video/webm;codecs=vp9',
+        'video/webm;codecs=h264',
         'video/webm;codecs=vp8',
         'video/webm',
         'video/mp4'
@@ -1081,6 +1121,7 @@ export function MotionAnalyzer() {
       for (const mimeType of mimeTypes) {
         if (MediaRecorder.isTypeSupported(mimeType)) {
           selectedMimeType = mimeType;
+          console.log(`サポートされたMIMEタイプ: ${mimeType}`);
           break;
         }
       }
@@ -1089,30 +1130,71 @@ export function MotionAnalyzer() {
         throw new Error('対応する動画フォーマットがありません');
       }
       
-      // MediaRecorderを初期化
+      // 高ビットレート・高品質設定
       const options: MediaRecorderOptions = {
         mimeType: selectedMimeType,
-        videoBitsPerSecond: 2500000 // 2.5Mbps
+        videoBitsPerSecond: 8000000  // 8Mbps - 非常に高画質
       };
       
+      // 以前のMediaRecorderインスタンスがあれば停止して破棄
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+      
+      // 先に画像データを描画してからストリームを作成
+      // 一番最初のフレームをキャンバスに描画しておく
+      if (processedFramesRef.current.length > 0) {
+        outputCtx.putImageData(processedFramesRef.current[0], 0, 0);
+      }
+      
+      // ストリームを作成
+      let stream;
+      try {
+        stream = outputCanvasRef.current.captureStream(targetFPS);
+        console.log('ストリーム作成成功:', stream);
+      } catch (err) {
+        console.error('ストリーム作成エラー:', err);
+        stream = outputCanvasRef.current.captureStream(0); // バックアッププラン
+      }
+      
+      // 新しいMediaRecorderインスタンスを作成
       mediaRecorderRef.current = new MediaRecorder(stream, options);
       recordedChunksRef.current = [];
       
       // データが利用可能になったときのイベント
       mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) {
+        if (event.data && event.data.size > 0) {
           recordedChunksRef.current.push(event.data);
+          console.log(`チャンクデータ収集: ${event.data.size} バイト`);
         }
+      };
+      
+      // エラーハンドリング
+      mediaRecorderRef.current.onerror = (event) => {
+        console.error('MediaRecorder エラー:', event);
+        setError('録画中にエラーが発生しました');
       };
       
       // 録画が完了したときのイベント
       mediaRecorderRef.current.onstop = () => {
+        // 処理中のフラグを解除
+        setIsCreatingVideo(false);
+        setVideoRecorderStatus('finished');
+        
+        // 十分なデータが収集されたか確認
+        if (recordedChunksRef.current.length === 0) {
+          setError('動画データの収集に失敗しました');
+          return;
+        }
+        
+        console.log(`収集されたデータチャンク: ${recordedChunksRef.current.length}個`);
+        
         // Blobを作成
         const blob = new Blob(recordedChunksRef.current, { type: selectedMimeType });
+        console.log(`生成された動画サイズ: ${(blob.size / (1024 * 1024)).toFixed(2)}MB`);
+        
         const url = URL.createObjectURL(blob);
         setProcessedVideoUrl(url);
-        setVideoRecorderStatus('finished');
-        setIsCreatingVideo(false);
         setProgress('動画の生成が完了しました');
         
         // 自動ダウンロード開始
@@ -1124,52 +1206,86 @@ export function MotionAnalyzer() {
         document.body.removeChild(a);
       };
       
-      // 録画状態を「録画中」に設定
+      // 録画開始前に状態を更新
       setVideoRecorderStatus('recording');
       
-      // 録画開始
-      mediaRecorderRef.current.start();
+      // 録画開始 - 小さなチャンクで安定性向上
+      mediaRecorderRef.current.start(200); // 200msごとにデータを収集
       
-      // キャンバスに処理済みのフレームを再生して録画
-      const ctx = canvasRef.current.getContext('2d');
-      if (!ctx) throw new Error('キャンバスコンテキストが取得できません');
+      // 元の動画の長さに合わせた再生時間（ミリ秒）
+      const targetDuration = originalDuration * 1000;
       
-      // 再生レートの計算（できるだけ元の動画に近いフレームレートで再生）
-      const originalFps = videoRef.current ? frameCount / (videoRef.current.duration || 30) : 30;
-      const fps = Math.min(30, originalFps); // 最大30fps
-      const frameInterval = 1000 / fps;
+      // フレーム間隔を計算
+      const frameInterval = targetDuration / totalFrames;
+      console.log(`フレーム間隔: ${frameInterval.toFixed(2)}ms、目標時間: ${targetDuration}ms`);
       
+      // フレーム描画関数
       let frameIndex = 0;
-      const totalFrames = Math.min(processedFramesRef.current.length, frameCount);
+      const startTime = performance.now();
       
-      const renderNextFrame = () => {
-        if (frameIndex >= totalFrames || !mediaRecorderRef.current || mediaRecorderRef.current.state !== 'recording') {
-          // 全フレーム処理完了または録画停止時
-          if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-            mediaRecorderRef.current.stop();
-          }
+      const drawNextFrame = () => {
+        const currentTime = performance.now();
+        const elapsedSinceStart = currentTime - startTime;
+        
+        // 終了条件: すべてのフレームを処理したか、目標時間に達した
+        if (
+          frameIndex >= totalFrames || 
+          elapsedSinceStart >= targetDuration + 1000 || // 1秒の余裕を持たせる
+          !mediaRecorderRef.current || 
+          mediaRecorderRef.current.state !== 'recording'
+        ) {
+          console.log(`描画完了: ${frameIndex}/${totalFrames} フレーム、経過時間: ${elapsedSinceStart.toFixed(0)}ms`);
+          
+          // 少し待ってから録画を停止（最後のフレームを確実に収集するため）
+          setTimeout(() => {
+            if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+              mediaRecorderRef.current.stop();
+            }
+          }, 1000); // 最後のフレームを確実に収集するため1秒待つ
+          
           return;
         }
         
-        // 次のフレームを描画
-        const frame = processedFramesRef.current[frameIndex];
-        ctx.putImageData(frame, 0, 0);
+        // 経過時間に基づいて、このタイミングで表示すべきフレームインデックスを計算
+        const idealFrameIndex = Math.min(
+          totalFrames - 1, 
+          Math.floor(elapsedSinceStart / frameInterval)
+        );
         
-        // 進捗状況の更新
-        const progress = Math.round((frameIndex / totalFrames) * 100);
-        setProgress(`動画生成中: ${progress}%`);
+        // 理想のフレームインデックスまでフレームを進める
+        if (frameIndex <= idealFrameIndex) {
+          try {
+            // 最新のフレームを描画
+            const frame = processedFramesRef.current[idealFrameIndex];
+            if (frame) {
+              outputCtx.putImageData(frame, 0, 0);
+              frameIndex = idealFrameIndex + 1;
+            } else {
+              // フレームが存在しない場合は次のフレームへ
+              frameIndex++;
+            }
+          } catch (err) {
+            console.error('フレーム描画エラー:', err);
+            // エラーが発生しても次のフレームに進む
+            frameIndex++;
+          }
+        }
         
-        // 次のフレームへ
-        frameIndex++;
+        // 進捗状況の更新（頻繁な更新を避けるため、5%ごと）
+        if (frameIndex % Math.max(1, Math.floor(totalFrames / 20)) === 0) {
+          const progress = Math.round((frameIndex / totalFrames) * 100);
+          const timeRatio = (elapsedSinceStart / targetDuration * 100).toFixed(1);
+          setProgress(`動画生成中: ${progress}% (${frameIndex}/${totalFrames}フレーム、時間比率: ${timeRatio}%)`);
+        }
         
-        // 次のフレーム描画をスケジュール
-        setTimeout(renderNextFrame, frameInterval);
+        // 次のアニメーションフレームを要求
+        requestAnimationFrame(drawNextFrame);
       };
       
-      // フレーム描画開始
-      renderNextFrame();
-      
+      // 描画開始
+      drawNextFrame();
     } catch (err) {
+      console.error('動画生成エラー:', err);
       setError(`動画の生成に失敗しました: ${err instanceof Error ? err.message : String(err)}`);
       setIsCreatingVideo(false);
       setVideoRecorderStatus('inactive');

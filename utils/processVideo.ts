@@ -183,7 +183,7 @@ export async function processVideo(videoBlob: Blob) {
     const chunks: Blob[] = [];
     const mediaRecorder = new MediaRecorder(captureCanvas.captureStream(video.videoWidth), {
       mimeType: 'video/webm;codecs=vp9',
-      videoBitsPerSecond: 3000000
+      videoBitsPerSecond: 3000000 // 元動画と同じ画質を維持するための設定
     });
     
     mediaRecorder.ondataavailable = (e) => {
