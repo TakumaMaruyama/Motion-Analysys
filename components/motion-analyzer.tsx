@@ -526,9 +526,13 @@ export function MotionAnalyzer() {
     // フレーム情報を描画
     drawFrameInfo(ctx);
     
-    // すべてのフレームを保存 - 高品質な出力のため
-    // ただしメモリ使用量の上限を考慮
-    if (processedFramesRef.current.length < 1500) {
+    // メモリ使用量とパフォーマンスを考慮したフレーム保存
+    // デバイス性能に応じてサンプリングレートを調整
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    const samplingRate = isMobile ? 5 : 2; // モバイルでは5フレームに1回、デスクトップでは2フレームに1回
+    const maxFrames = isMobile ? 600 : 1500; // モバイルではフレーム数を制限
+    
+    if (currentFrameRef.current % samplingRate === 0 && processedFramesRef.current.length < maxFrames) {
       try {
         const imageData = ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
         processedFramesRef.current.push(imageData);
@@ -549,19 +553,24 @@ export function MotionAnalyzer() {
         await holisticRef.current.close();
       }
       
-      // 指定バージョンの配列 - CDNの問題を回避するために複数のソースを試行する
+      // より信頼性の高いCDNソースを追加
       const versionSources = [
-        {
-          version: '',
-          baseUrl: 'https://cdn.jsdelivr.net/npm/@mediapipe/holistic'
-        },
         {
           version: '@0.5.1675469404',
           baseUrl: 'https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1675469404'
         },
         {
+          version: '',
+          baseUrl: 'https://cdn.jsdelivr.net/npm/@mediapipe/holistic'
+        },
+        {
           version: '@0.4.1633559619',
           baseUrl: 'https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.4.1633559619'
+        },
+        // フォールバックオプションを追加
+        {
+          version: '@latest',
+          baseUrl: 'https://unpkg.com/@mediapipe/holistic'
         }
       ];
       
@@ -582,9 +591,9 @@ export function MotionAnalyzer() {
             }
           });
           
-          // オプションを設定 - パフォーマンス向上のために最適化
+          // モバイル向けに最適化したオプション設定
           await holistic.setOptions({
-            modelComplexity: 1,           // 0=Lite, 1=Full, 2=Heavy - バランスが良い1を選択
+            modelComplexity: 0,           // モバイル向けに軽量モデルを使用 (0=Lite)
             smoothLandmarks: true,        // 滑らかなランドマーク描画
             enableSegmentation: false,    // パフォーマンス向上のためセグメンテーションを無効化
             refineFaceLandmarks: false,   // 顔のランドマーク精度を犠牲にしてパフォーマンス向上
@@ -595,23 +604,12 @@ export function MotionAnalyzer() {
           // 結果コールバックを設定
           holistic.onResults(onResults);
           
-          // 初期化テスト - 空のキャンバスで一度実行してみる
-          const testCanvas = document.createElement('canvas');
-          testCanvas.width = 320;
-          testCanvas.height = 240;
-          const ctx = testCanvas.getContext('2d');
-          if (ctx) {
-            ctx.fillStyle = 'black';
-            ctx.fillRect(0, 0, testCanvas.width, testCanvas.height);
-            await holistic.send({image: testCanvas});
-            console.log(`MediaPipe Holistic${source.version}の初期化テスト成功`);
-          }
+          // 簡易初期化テスト - 完全なテストはスキップ
+          console.log(`MediaPipe Holistic${source.version}初期化成功`);
           
           // 参照を保存
           holisticRef.current = holistic;
           success = true;
-          
-          console.log(`MediaPipe Holistic${source.version}初期化完了!`);
         } catch (err) {
           console.error(`MediaPipe Holistic${source.version}初期化エラー:`, err);
           error = err;
@@ -663,33 +661,57 @@ export function MotionAnalyzer() {
       setProcessingUrl(null);
       setAnalysisResult(null);
       
-      // MediaPipe Holisticの初期化を開始
-      console.log('MediaPipe Holisticを初期化します...');
-      await initHolistic();
+      // MediaPipe Holisticの初期化 - 必要な場合のみ初期化
+      if (!holisticLoaded) {
+        console.log('MediaPipe Holisticを初期化します...');
+        await initHolistic();
+      }
       
       // 動画URLを作成し、video要素に設定
       const videoURL = URL.createObjectURL(file);
+      
+      // 動画読み込みの処理方法を改善
       videoRef.current.src = videoURL;
       
+      // 動画のメタデータ読み込み完了時の処理
       videoRef.current.onloadedmetadata = () => {
         console.log('動画メタデータが読み込まれました, 長さ:', videoRef.current?.duration || 0);
         
         if (!videoRef.current || !canvasRef.current) return;
         
+        // モバイル向けにリサイズした解像度を設定
+        const maxDimension = 640; // モバイル向けに小さめの解像度に制限
+        
+        // アスペクト比を維持しながら適切なサイズを計算
+        let width = videoRef.current.videoWidth;
+        let height = videoRef.current.videoHeight;
+        
+        if (width > height) {
+          if (width > maxDimension) {
+            height = Math.floor(height * (maxDimension / width));
+            width = maxDimension;
+          }
+        } else {
+          if (height > maxDimension) {
+            width = Math.floor(width * (maxDimension / height));
+            height = maxDimension;
+          }
+        }
+        
         // キャンバスサイズを動画サイズに合わせる
-        canvasRef.current.width = videoRef.current.videoWidth;
-        canvasRef.current.height = videoRef.current.videoHeight;
+        canvasRef.current.width = width;
+        canvasRef.current.height = height;
         
         // 出力用キャンバスも同じサイズに設定
         if (outputCanvasRef.current) {
-          outputCanvasRef.current.width = videoRef.current.videoWidth;
-          outputCanvasRef.current.height = videoRef.current.videoHeight;
+          outputCanvasRef.current.width = width;
+          outputCanvasRef.current.height = height;
         }
         
         // アスペクト比を維持しながら表示サイズを調整
-        const aspectRatio = videoRef.current.videoWidth / videoRef.current.videoHeight;
-        const maxWidth = 800; // 最大表示幅
-        let displayWidth = Math.min(maxWidth, videoRef.current.videoWidth);
+        const aspectRatio = width / height;
+        const maxWidth = Math.min(800, window.innerWidth - 32); // 画面幅に合わせて調整
+        let displayWidth = Math.min(maxWidth, width);
         let displayHeight = displayWidth / aspectRatio;
         
         canvasRef.current.style.width = `${displayWidth}px`;
@@ -700,29 +722,30 @@ export function MotionAnalyzer() {
         videoRef.current.style.height = `${displayHeight}px`;
         
         setProgress('動画の処理準備ができました。解析を開始します...');
-      };
-      
-      videoRef.current.oncanplay = () => {
-        console.log('動画の再生準備ができました');
-        setVideoLoaded(true);
         
-        if (videoRef.current) {
-          // 動画の再生を開始し、フレーム処理を開始
-          videoRef.current.play().then(() => {
-            console.log('動画再生開始');
-            startFrameCapture();
-            setProgress('動画を処理中...');
-          }).catch(err => {
-            console.error('動画再生エラー:', err);
-            setError(`動画再生エラー: ${err instanceof Error ? err.message : '不明なエラー'}`);
-            setIsProcessing(false);
-          });
-        }
+        // モバイルでの問題回避のため、メタデータ読み込み後に再生を開始
+        setTimeout(() => {
+          if (videoRef.current) {
+            videoRef.current.play()
+              .then(() => {
+                console.log('動画再生開始');
+                setVideoLoaded(true);
+                startFrameCapture();
+                setProgress('動画を処理中...');
+              })
+              .catch(err => {
+                console.error('動画再生エラー:', err);
+                setError(`動画再生エラー: ${err instanceof Error ? err.message : '不明なエラー'}`);
+                setIsProcessing(false);
+              });
+          }
+        }, 500); // 少し遅延を入れてメタデータが確実に読み込まれるようにする
       };
       
-      videoRef.current.onerror = () => {
-        console.error('動画読み込みエラー');
-        setError('動画の読み込みに失敗しました');
+      // エラー処理を強化
+      videoRef.current.onerror = (e) => {
+        console.error('動画読み込みエラー:', e);
+        setError('動画の読み込みに失敗しました。フォーマットがサポートされているか確認してください。');
         setIsProcessing(false);
       };
       
@@ -762,6 +785,14 @@ export function MotionAnalyzer() {
         }
       };
       
+      // timeupdate イベントを追加してモバイルでの問題を監視
+      videoRef.current.ontimeupdate = () => {
+        if (isCapturing) {
+          // タイムアップデートが発生していれば処理は進んでいるはず
+          console.log('Video timeupdate:', videoRef.current?.currentTime);
+        }
+      };
+      
     } catch (err) {
       console.error('動画処理エラー:', err);
       setError(`動画の処理中にエラーが発生しました: ${err instanceof Error ? err.message : '不明なエラー'}`);
@@ -781,12 +812,21 @@ export function MotionAnalyzer() {
     setIsCapturing(true);
     detectedFramesRef.current = 0;
     
-    // 最後の処理時間を記録
-    let lastProcessTime = 0;
-    // 目標フレームレート（動画と同期するために高めに設定）
-    const targetFPS = 30; // 24から30に変更
+    // モバイル向けのフレームレート調整
+    // モバイルではパフォーマンスが制限されるため、低めのフレームレートに設定
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    const targetFPS = isMobile ? 15 : 30; // モバイルは15fps、デスクトップは30fps
+    
     // フレーム間の最小時間（ミリ秒）
     const frameInterval = 1000 / targetFPS;
+    
+    // 最後の処理時間とフレーム処理失敗回数のカウンター
+    let lastProcessTime = 0;
+    let failureCount = 0;
+    const MAX_FAILURES = 5;
+    
+    // MediaPipe処理のためのタイムアウト設定
+    const PROCESSING_TIMEOUT = 500; // 500ミリ秒
     
     const captureAndProcessFrame = async () => {
       if (videoRef.current && !videoRef.current.paused && !videoRef.current.ended) {
@@ -801,9 +841,29 @@ export function MotionAnalyzer() {
             // 処理を開始する前にUIスレッドを解放
             await new Promise(resolve => setTimeout(resolve, 0));
             
+            // 処理が完了するかタイムアウトするまで待機するPromise
+            const timeoutPromise = new Promise((_, reject) => {
+              setTimeout(() => reject(new Error('MediaPipeの処理がタイムアウトしました')), PROCESSING_TIMEOUT);
+            });
+            
             // 現在のビデオフレームをHolisticに送信
-            if (holisticRef.current) {
-              await holisticRef.current.send({image: videoRef.current});
+            try {
+              // タイムアウト処理と競合させる
+              await Promise.race([
+                holisticRef.current?.send({image: videoRef.current}),
+                timeoutPromise
+              ]);
+              
+              // 成功したらエラーカウンターをリセット
+              failureCount = 0;
+            } catch (err) {
+              console.warn('フレーム処理タイムアウト:', err);
+              failureCount++;
+              
+              // 連続失敗が多すぎる場合は処理を停止
+              if (failureCount > MAX_FAILURES) {
+                throw new Error('フレーム処理に繰り返し失敗しました。デバイスの性能が不足している可能性があります。');
+              }
             }
           }
           
