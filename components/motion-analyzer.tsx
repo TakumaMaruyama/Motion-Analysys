@@ -529,8 +529,12 @@ export function MotionAnalyzer() {
     // メモリ使用量とパフォーマンスを考慮したフレーム保存
     // デバイス性能に応じてサンプリングレートを調整
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    const samplingRate = isMobile ? 5 : 2; // モバイルでは5フレームに1回、デスクトップでは2フレームに1回
-    const maxFrames = isMobile ? 600 : 1500; // モバイルではフレーム数を制限
+    const isLowEndDevice = isMobile && (/iPhone\s+([6-9]|1[0-2])/i.test(navigator.userAgent) || 
+                                       /iPad\s+([1-5])/i.test(navigator.userAgent));
+    
+    // さらに低いサンプリングレートに調整
+    const samplingRate = isLowEndDevice ? 8 : (isMobile ? 5 : 2); // iPhone向けに8フレームに1回
+    const maxFrames = isLowEndDevice ? 300 : (isMobile ? 600 : 1500); // iPhoneはさらに制限
     
     if (currentFrameRef.current % samplingRate === 0 && processedFramesRef.current.length < maxFrames) {
       try {
@@ -552,6 +556,13 @@ export function MotionAnalyzer() {
       if (holisticRef.current) {
         await holisticRef.current.close();
       }
+      
+      // デバイスの性能を検出
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      const isLowEndDevice = isMobile && (/iPhone\s+([6-9]|1[0-2])/i.test(navigator.userAgent) || 
+                                         /iPad\s+([1-5])/i.test(navigator.userAgent));
+      
+      console.log(`デバイス検出: モバイル=${isMobile}, 低性能=${isLowEndDevice}`);
       
       // より信頼性の高いCDNソースを追加
       const versionSources = [
@@ -592,19 +603,20 @@ export function MotionAnalyzer() {
           });
           
           // モバイル向けに最適化したオプション設定
+          // iPhone向けに極めて軽量な設定を適用
           await holistic.setOptions({
-            modelComplexity: 0,           // モバイル向けに軽量モデルを使用 (0=Lite)
-            smoothLandmarks: true,        // 滑らかなランドマーク描画
-            enableSegmentation: false,    // パフォーマンス向上のためセグメンテーションを無効化
-            refineFaceLandmarks: false,   // 顔のランドマーク精度を犠牲にしてパフォーマンス向上
-            minDetectionConfidence: 0.5,  // 検出信頼度閾値
-            minTrackingConfidence: 0.5    // トラッキング信頼度閾値
+            selfieMode: true,               // 自撮りモード（処理負荷軽減）
+            modelComplexity: 0,             // 最も軽量なモデル (0=Lite)
+            smoothLandmarks: true,          // 滑らかなランドマーク
+            enableSegmentation: false,      // セグメンテーションを無効化
+            refineFaceLandmarks: false,     // 顔のランドマーク精度を下げる
+            minDetectionConfidence: 0.3,    // 検出閾値を下げる (0.5→0.3)
+            minTrackingConfidence: 0.3,     // トラッキング閾値を下げる (0.5→0.3)
           });
           
           // 結果コールバックを設定
           holistic.onResults(onResults);
           
-          // 簡易初期化テスト - 完全なテストはスキップ
           console.log(`MediaPipe Holistic${source.version}初期化成功`);
           
           // 参照を保存
@@ -667,6 +679,12 @@ export function MotionAnalyzer() {
         await initHolistic();
       }
       
+      // 動画ファイルサイズチェック
+      const MAX_SIZE_MB = 50; // 50MB以上は警告
+      if (file.size > MAX_SIZE_MB * 1024 * 1024) {
+        console.warn(`大きなファイル (${(file.size / (1024 * 1024)).toFixed(1)}MB) が選択されました。処理に時間がかかる場合があります。`);
+      }
+      
       // 動画URLを作成し、video要素に設定
       const videoURL = URL.createObjectURL(file);
       
@@ -679,8 +697,14 @@ export function MotionAnalyzer() {
         
         if (!videoRef.current || !canvasRef.current) return;
         
-        // モバイル向けにリサイズした解像度を設定
-        const maxDimension = 640; // モバイル向けに小さめの解像度に制限
+        // デバイス検出とリサイズ設定の調整
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        const isLowEndDevice = isMobile && (/iPhone\s+([6-9]|1[0-2])/i.test(navigator.userAgent) || 
+                                           /iPad\s+([1-5])/i.test(navigator.userAgent));
+        
+        // 極めて低解像度に設定（iPhone用）
+        const maxDimension = isLowEndDevice ? 320 : (isMobile ? 480 : 640);
+        console.log(`解像度設定: maxDimension=${maxDimension}px (${isMobile ? 'モバイル' : 'デスクトップ'})`);
         
         // アスペクト比を維持しながら適切なサイズを計算
         let width = videoRef.current.videoWidth;
@@ -698,7 +722,7 @@ export function MotionAnalyzer() {
           }
         }
         
-        // キャンバスサイズを動画サイズに合わせる
+        // キャンバスサイズを縮小した動画サイズに合わせる
         canvasRef.current.width = width;
         canvasRef.current.height = height;
         
@@ -723,9 +747,14 @@ export function MotionAnalyzer() {
         
         setProgress('動画の処理準備ができました。解析を開始します...');
         
-        // モバイルでの問題回避のため、メタデータ読み込み後に再生を開始
+        // iPhone用に処理を最適化 - より長いタイムアウトを設定
         setTimeout(() => {
           if (videoRef.current) {
+            // 再生速度を遅くして処理負荷を軽減
+            if (isMobile) {
+              videoRef.current.playbackRate = 0.75; // 再生速度を75%に設定
+            }
+            
             videoRef.current.play()
               .then(() => {
                 console.log('動画再生開始');
@@ -739,7 +768,7 @@ export function MotionAnalyzer() {
                 setIsProcessing(false);
               });
           }
-        }, 500); // 少し遅延を入れてメタデータが確実に読み込まれるようにする
+        }, 1000); // タイムアウトを1秒に延長
       };
       
       // エラー処理を強化
@@ -765,7 +794,7 @@ export function MotionAnalyzer() {
         setIsProcessing(false);
         
         // 検出率の最終計算
-        const finalRate = Math.round((detectedFramesRef.current / currentFrameRef.current) * 100);
+        const finalRate = Math.round((detectedFramesRef.current / Math.max(1, currentFrameRef.current)) * 100);
         setDetectionRate(finalRate);
         
         // 分析結果を生成
@@ -813,9 +842,14 @@ export function MotionAnalyzer() {
     detectedFramesRef.current = 0;
     
     // モバイル向けのフレームレート調整
-    // モバイルではパフォーマンスが制限されるため、低めのフレームレートに設定
+    // iPhone向けにさらに低いフレームレートを設定
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    const targetFPS = isMobile ? 15 : 30; // モバイルは15fps、デスクトップは30fps
+    const isLowEndDevice = isMobile && (/iPhone\s+([6-9]|1[0-2])/i.test(navigator.userAgent) || 
+                                       /iPad\s+([1-5])/i.test(navigator.userAgent));
+    
+    // 超低フレームレート設定（特にiPhone 15など新しいデバイスでも安全に）
+    const targetFPS = isLowEndDevice ? 10 : (isMobile ? 12 : 30);
+    console.log(`フレームレート設定: ${targetFPS}fps (${isMobile ? 'モバイル' : 'デスクトップ'})`);
     
     // フレーム間の最小時間（ミリ秒）
     const frameInterval = 1000 / targetFPS;
@@ -823,46 +857,90 @@ export function MotionAnalyzer() {
     // 最後の処理時間とフレーム処理失敗回数のカウンター
     let lastProcessTime = 0;
     let failureCount = 0;
-    const MAX_FAILURES = 5;
+    const MAX_FAILURES = 10; // 失敗許容回数を増やす
     
     // MediaPipe処理のためのタイムアウト設定
-    const PROCESSING_TIMEOUT = 500; // 500ミリ秒
+    const PROCESSING_TIMEOUT = 1000; // タイムアウトを1秒に延長
+    
+    // フレームスキップのための変数
+    let frameCounter = 0;
+    const FRAME_SKIP = isMobile ? 2 : 0; // モバイルでは2フレームスキップ
     
     const captureAndProcessFrame = async () => {
-      if (videoRef.current && !videoRef.current.paused && !videoRef.current.ended) {
+      if (videoRef.current && !videoRef.current.paused && !videoRef.current.ended && canvasRef.current) {
         try {
           const now = performance.now();
           const elapsed = now - lastProcessTime;
+          
+          // フレームスキップの実装
+          frameCounter++;
+          if (frameCounter <= FRAME_SKIP) {
+            // フレームをスキップ
+            frameCapturerRef.current = requestAnimationFrame(captureAndProcessFrame);
+            return;
+          }
+          frameCounter = 0;
           
           // 前回の処理から十分な時間が経過している場合のみ処理
           if (elapsed >= frameInterval) {
             lastProcessTime = now;
             
-            // 処理を開始する前にUIスレッドを解放
-            await new Promise(resolve => setTimeout(resolve, 0));
-            
-            // 処理が完了するかタイムアウトするまで待機するPromise
-            const timeoutPromise = new Promise((_, reject) => {
-              setTimeout(() => reject(new Error('MediaPipeの処理がタイムアウトしました')), PROCESSING_TIMEOUT);
-            });
-            
-            // 現在のビデオフレームをHolisticに送信
-            try {
-              // タイムアウト処理と競合させる
-              await Promise.race([
-                holisticRef.current?.send({image: videoRef.current}),
-                timeoutPromise
-              ]);
+            // キャンバスに直接描画（MediaPipeを使わない場合）
+            if (!holisticLoaded || failureCount > MAX_FAILURES / 2) {
+              // MediaPipeのフォールバック: 直接描画のみ
+              const ctx = canvasRef.current.getContext('2d');
+              if (ctx && videoRef.current) {
+                ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+                ctx.drawImage(
+                  videoRef.current,
+                  0, 0,
+                  canvasRef.current.width,
+                  canvasRef.current.height
+                );
+                // フレーム数などの更新だけは行う
+                currentFrameRef.current += 1;
+                setFrameCount(prev => prev + 1);
+                
+                // エラーが多い場合はフレームだけを保存
+                if (processedFramesRef.current.length < 600) { // 安全のために少なめに
+                  try {
+                    const imageData = ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
+                    processedFramesRef.current.push(imageData);
+                  } catch (e) {
+                    console.warn('フレーム保存エラー:', e);
+                  }
+                }
+              }
+            }
+            else {
+              // 処理を開始する前にUIスレッドを解放
+              await new Promise(resolve => setTimeout(resolve, 0));
               
-              // 成功したらエラーカウンターをリセット
-              failureCount = 0;
-            } catch (err) {
-              console.warn('フレーム処理タイムアウト:', err);
-              failureCount++;
+              // 処理が完了するかタイムアウトするまで待機するPromise
+              const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('MediaPipeの処理がタイムアウトしました')), PROCESSING_TIMEOUT);
+              });
               
-              // 連続失敗が多すぎる場合は処理を停止
-              if (failureCount > MAX_FAILURES) {
-                throw new Error('フレーム処理に繰り返し失敗しました。デバイスの性能が不足している可能性があります。');
+              // 現在のビデオフレームをHolisticに送信
+              try {
+                // タイムアウト処理と競合させる
+                await Promise.race([
+                  holisticRef.current?.send({image: videoRef.current}),
+                  timeoutPromise
+                ]);
+                
+                // 成功したらエラーカウンターをリセット
+                failureCount = Math.max(0, failureCount - 1); // 徐々に減らす
+              } catch (err) {
+                console.warn('フレーム処理タイムアウト:', err);
+                failureCount++;
+                
+                // 連続失敗が多すぎる場合は処理を停止
+                if (failureCount > MAX_FAILURES) {
+                  // エラーを投げる代わりに警告のみにし、フォールバックモードに切り替え
+                  console.error('フレーム処理に繰り返し失敗しました。簡易モードに切り替えます。');
+                  setProgress('MediaPipe処理に失敗しました。簡易モードで続行します。');
+                }
               }
             }
           }
@@ -871,8 +949,8 @@ export function MotionAnalyzer() {
           frameCapturerRef.current = requestAnimationFrame(captureAndProcessFrame);
         } catch (err) {
           console.error('Frame processing error:', err);
-          stopFrameCapture();
-          setError(`フレーム処理エラー: ${err instanceof Error ? err.message : '不明なエラー'}`);
+          // エラーが出ても完全に停止せず、継続を試みる
+          frameCapturerRef.current = requestAnimationFrame(captureAndProcessFrame);
         }
       } else if (videoRef.current && videoRef.current.ended) {
         // 動画が終了した場合
