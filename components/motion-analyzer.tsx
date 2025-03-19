@@ -1266,163 +1266,151 @@ export function MotionAnalyzer() {
         const targetDuration = originalDuration * 1000;
         const frameInterval = targetDuration / totalFrames;
         
-        setProgress('処理中: フレームをシーケンスとして生成します');
+        setProgress('処理中: GIFアニメーションを生成します');
         
         try {
-          // GIF生成用のWebWorker作成（重たい処理をメインスレッドから分離）
-          const gifWorker = new Worker(
-            URL.createObjectURL(
-              new Blob([
-                `
-                // GIFエンコーダーのロジック
-                self.onmessage = function(e) {
-                  const { frames, width, height, quality, delay } = e.data;
-                  let frameIndex = 0;
-                  
-                  // 進捗更新関数
-                  function updateProgress() {
-                    if (frames.length > 0) {
-                      const progress = Math.round((frameIndex / frames.length) * 100);
-                      self.postMessage({ type: 'progress', progress });
-                    }
-                  }
-                  
-                  // 簡易GIFエンコーダー（実際にはライブラリを使うべき）
-                  try {
-                    // ここでは擬似コード - 実際のGIF生成ロジックが必要
-                    const gifFrames = [];
-                    let processedFrames = 0;
-                    
-                    // 低フレームレートでフレームを間引く
-                    const frameStep = Math.max(1, Math.floor(frames.length / 50)); // 最大50フレーム程度
-                    
-                    for (let i = 0; i < frames.length; i += frameStep) {
-                      gifFrames.push(frames[i]);
-                      processedFrames++;
-                      frameIndex = i;
-                      
-                      // 定期的に進捗を報告
-                      if (i % 5 === 0) {
-                        updateProgress();
-                      }
-                    }
-                    
-                    // 処理完了を通知
-                    setTimeout(() => {
-                      self.postMessage({ 
-                        type: 'complete', 
-                        frameCount: processedFrames,
-                        dataUrl: 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==' // ダミーGIF
-                      });
-                    }, 1000);
-                  } catch (error) {
-                    self.postMessage({ type: 'error', error: error.toString() });
-                  }
-                };
-                `
-              ], { type: 'application/javascript' })
-            )
-          );
+          // GIF.jsライブラリを動的にロード
+          const gifScript = document.createElement('script');
+          gifScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js';
+          document.body.appendChild(gifScript);
           
-          // データをBase64エンコードするヘルパー関数
-          const canvasToBase64 = (canvas: HTMLCanvasElement): Promise<string> => {
-            return new Promise((resolve) => {
-              canvas.toBlob((blob) => {
-                const reader = new FileReader();
-                reader.onloadend = () => resolve(reader.result as string);
-                reader.readAsDataURL(blob!);
-              }, 'image/jpeg', 0.85); // JPEG形式で軽量化
-            });
-          };
+          // スクリプトがロードされるのを待つ
+          await new Promise((resolve, reject) => {
+            gifScript.onload = resolve;
+            gifScript.onerror = reject;
+          });
           
-          // フレームデータを準備
-          const frames: string[] = [];
-          const samplingRate = Math.max(1, Math.ceil(totalFrames / 150)); // 最大150フレーム
+          setProgress('GIFライブラリを初期化中...');
+          
+          // GIFエンコーダーの設定
+          const gif = new (window as any).GIF({
+            workers: 2,             // ワーカー数
+            quality: 10,            // 品質 (1-30)
+            width: outputCanvasRef.current!.width,
+            height: outputCanvasRef.current!.height,
+            workerScript: 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js'
+          });
+          
+          // 進捗イベント
+          gif.on('progress', (progress: number) => {
+            setProgress(`GIF生成中: ${Math.round(progress * 100)}%`);
+          });
+          
+          // 完了イベント
+          gif.on('finished', (blob: Blob) => {
+            const url = URL.createObjectURL(blob);
+            setProcessedVideoUrl(url);
+            setProgress('GIFアニメーションの生成が完了しました');
+            
+            // ダウンロードリンクを自動的に作成
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${sessionId}_landmarks.gif`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            
+            setIsCreatingVideo(false);
+          });
+          
+          // フレームの間引き（モバイルでの処理負荷とファイルサイズ軽減のため）
+          // デバイスによって間引く量を調整（画面サイズで判定）
+          const isMobileSmall = window.innerWidth < 480;
+          const samplingRate = isMobileSmall ? 
+            Math.max(5, Math.ceil(totalFrames / 50)) : // 小さい画面では最大50フレーム
+            Math.max(3, Math.ceil(totalFrames / 100)); // 大きい画面では最大100フレーム
+          
+          // GIFの遅延時間（ミリ秒）
+          const delay = Math.max(100, Math.round(frameInterval * samplingRate));
           
           setProgress('フレームを抽出中...');
           
-          // フレームをサンプリング
+          // 必要なフレームを順番に追加
+          let framesAdded = 0;
+          const totalFramesToAdd = Math.ceil(totalFrames / samplingRate);
+          
           for (let i = 0; i < totalFrames; i += samplingRate) {
             if (i < processedFramesRef.current.length) {
+              outputCtx.clearRect(0, 0, outputCanvasRef.current!.width, outputCanvasRef.current!.height);
               outputCtx.putImageData(processedFramesRef.current[i], 0, 0);
-              const base64 = await canvasToBase64(outputCanvasRef.current!);
-              frames.push(base64);
               
-              if (i % 10 === 0) {
-                setProgress(`フレーム抽出中: ${Math.round((i / totalFrames) * 100)}%`);
+              // キャンバスをGIFに追加
+              gif.addFrame(outputCanvasRef.current, {
+                delay: delay,
+                copy: true
+              });
+              
+              framesAdded++;
+              
+              if (framesAdded % 5 === 0) {
+                setProgress(`GIFフレーム追加中: ${Math.round((framesAdded / totalFramesToAdd) * 100)}% (${framesAdded}/${totalFramesToAdd})`);
+                // UIの更新を待つ
+                await new Promise(resolve => setTimeout(resolve, 0));
               }
             }
           }
           
-          setProgress('フレームシーケンスを生成中...');
-          
-          // Web Workerにデータを送信
-          gifWorker.onmessage = (e) => {
-            const { type, progress, dataUrl, frameCount, error } = e.data;
-            
-            if (type === 'progress') {
-              setProgress(`GIF生成中: ${progress}%`);
-            } else if (type === 'complete') {
-              console.log(`GIF生成完了: ${frameCount}フレーム`);
-              setProgress('ダウンロードの準備中...');
-              
-              // ZIPファイルを生成して全フレームをダウンロード
-              setProgress('フレームパッケージをダウンロード中...');
-              
-              const processedVideoData = {
-                frames: frames.slice(0, 50), // 最初の50フレームだけ（容量制限）
-                frameCount: totalFrames,
-                timestamp: new Date().toISOString(),
-                sessionId
-              };
-              
-              // JSONとして保存
-              const jsonBlob = new Blob([JSON.stringify(processedVideoData)], { type: 'application/json' });
-              const jsonUrl = URL.createObjectURL(jsonBlob);
-              
-              const downloadLink = document.createElement('a');
-              downloadLink.href = jsonUrl;
-              downloadLink.download = `${sessionId}_frames.json`;
-              downloadLink.click();
-              
-              // 最後のフレームを表示用にセット
-              if (frames.length > 0) {
-                const img = new Image();
-                img.onload = () => {
-                  outputCtx.clearRect(0, 0, outputCanvasRef.current!.width, outputCanvasRef.current!.height);
-                  outputCtx.drawImage(img, 0, 0);
-                  
-                  // 最終フレームのサムネイルをURL化
-                  const finalUrl = outputCanvasRef.current!.toDataURL('image/jpeg', 0.95);
-                  setProcessedVideoUrl(finalUrl);
-                  setProgress('フレームシーケンスの生成が完了しました');
-                };
-                img.src = frames[frames.length - 1];
-              }
-              
-              setIsCreatingVideo(false);
-              gifWorker.terminate();
-            } else if (type === 'error') {
-              console.error('GIF生成エラー:', error);
-              setError(`GIF生成中にエラーが発生しました: ${error}`);
-              setIsCreatingVideo(false);
-              gifWorker.terminate();
-            }
-          };
-          
-          // フレームデータをWorkerに送信
-          gifWorker.postMessage({
-            frames,
-            width: outputCanvasRef.current!.width,
-            height: outputCanvasRef.current!.height,
-            quality: 10, // 品質（1-10）
-            delay: Math.round(frameInterval / 10) // GIFのフレーム間隔（ms）
-          });
+          // GIF生成開始
+          setProgress('GIFの生成を開始します...');
+          gif.render();
           
         } catch (err) {
-          console.error('フォールバック処理エラー:', err);
-          setError(`フォールバック処理中にエラーが発生しました: ${err instanceof Error ? err.message : String(err)}`);
+          console.error('GIF生成エラー:', err);
+          
+          // GIF.jsが失敗した場合のフォールバック（単一画像）
+          setProgress('GIF生成に失敗しました。代替方法で画像を生成します...');
+          
+          try {
+            // 最低限の出力として、最初と最後のフレームを連結した画像を生成
+            const startFrame = processedFramesRef.current[0];
+            const endFrame = processedFramesRef.current[processedFramesRef.current.length - 1];
+            
+            // 2フレームを並べて表示するキャンバスを作成
+            const fallbackCanvas = document.createElement('canvas');
+            fallbackCanvas.width = canvasRef.current!.width * 2;
+            fallbackCanvas.height = canvasRef.current!.height;
+            
+            const fbCtx = fallbackCanvas.getContext('2d');
+            if (fbCtx) {
+              // 最初のフレーム
+              fbCtx.putImageData(startFrame, 0, 0);
+              
+              // 最後のフレーム
+              fbCtx.putImageData(endFrame, canvasRef.current!.width, 0);
+              
+              // ラベルを追加
+              fbCtx.font = "16px Arial";
+              fbCtx.fillStyle = "white";
+              fbCtx.fillRect(10, 10, 90, 30);
+              fbCtx.fillRect(canvasRef.current!.width + 10, 10, 90, 30);
+              fbCtx.fillStyle = "black";
+              fbCtx.fillText("開始フレーム", 15, 30);
+              fbCtx.fillText("終了フレーム", canvasRef.current!.width + 15, 30);
+              
+              // 画像をダウンロード
+              const imageUrl = fallbackCanvas.toDataURL('image/png');
+              const a = document.createElement('a');
+              a.href = imageUrl;
+              a.download = `${sessionId}_landmarks_frames.png`;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              
+              setProcessedVideoUrl(imageUrl);
+              setProgress('ランドマーク画像の生成が完了しました（GIF生成は失敗）');
+            }
+          } catch (fallbackErr) {
+            console.error('フォールバック画像生成エラー:', fallbackErr);
+            setError(`動画生成に失敗しました: ${err instanceof Error ? err.message : String(err)}`);
+          }
+          
           setIsCreatingVideo(false);
+        } finally {
+          // クリーンアップ
+          const gifScript = document.querySelector('script[src*="gif.js"]');
+          if (gifScript) {
+            document.body.removeChild(gifScript);
+          }
         }
         
         return; // フォールバック処理終了
