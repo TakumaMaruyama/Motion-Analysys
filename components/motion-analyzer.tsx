@@ -306,6 +306,9 @@ export function MotionAnalyzer() {
   const [holisticLoaded, setHolisticLoaded] = useState(false);
   const [detectionRate, setDetectionRate] = useState(0);
   
+  const [waitingForStart, setWaitingForStart] = useState(false);
+  const [mediaLibraryStatus, setMediaLibraryStatus] = useState('未初期化');
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -334,6 +337,10 @@ export function MotionAnalyzer() {
     
     // MediaPipe Holisticを初期化
     initHolistic();
+    
+    // モバイルかどうか検出
+    const isMobile = /iPhone|iPad|iPod|Android|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    console.log(`デバイス検出: モバイル=${isMobile}, UA=${navigator.userAgent}`);
     
     // クリーンアップ関数
     return () => {
@@ -545,6 +552,7 @@ export function MotionAnalyzer() {
     try {
       console.log('MediaPipe Holisticを初期化中...');
       setHolisticLoaded(false);
+      setMediaLibraryStatus('初期化中...');
       
       // 既存のインスタンスをクリーンアップ
       if (holisticRef.current) {
@@ -576,6 +584,7 @@ export function MotionAnalyzer() {
         
         try {
           console.log(`MediaPipe Holistic${source.version}を試行...`);
+          setMediaLibraryStatus(`MediaPipe Holistic${source.version}の読み込み中...`);
           
           // 新しいHolisticインスタンスを作成
           const holistic = new Holistic({
@@ -584,14 +593,16 @@ export function MotionAnalyzer() {
             }
           });
           
-          // オプションを設定 - 性能とバランスの取れた中間の設定に
+          // オプションを設定 - モバイル向けに軽量化
+          const isMobile = /iPhone|iPad|iPod|Android|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+          
           await holistic.setOptions({
-            modelComplexity: 1,           // Fullモデルに変更(2→1)：バランスの良いパフォーマンスと精度
-            smoothLandmarks: true,        // 滑らかなランドマーク描画
-            enableSegmentation: false,    // パフォーマンス向上のためセグメンテーションを無効化
-            refineFaceLandmarks: false,   // 顔の詳細は重要でないので無効化
-            minDetectionConfidence: 0.5,  // 検出信頼度閾値
-            minTrackingConfidence: 0.5    // トラッキング信頼度閾値
+            modelComplexity: isMobile ? 0 : 1,  // モバイルは軽量モデル(Lite)を使用
+            smoothLandmarks: true,
+            enableSegmentation: false,          // パフォーマンス向上のためセグメンテーションを無効化
+            refineFaceLandmarks: false,         // 顔の詳細は重要でないので無効化
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
           });
           
           // 結果コールバックを設定
@@ -605,6 +616,8 @@ export function MotionAnalyzer() {
           if (ctx) {
             ctx.fillStyle = 'black';
             ctx.fillRect(0, 0, testCanvas.width, testCanvas.height);
+            setMediaLibraryStatus(`MediaPipe Holistic${source.version}のテスト中...`);
+            
             await holistic.send({image: testCanvas});
             console.log(`MediaPipe Holistic${source.version}の初期化テスト成功`);
           }
@@ -614,8 +627,10 @@ export function MotionAnalyzer() {
           success = true;
           
           console.log(`MediaPipe Holistic${source.version}初期化完了!`);
+          setMediaLibraryStatus(`MediaPipe Holistic${source.version}の準備完了`);
         } catch (err) {
           console.error(`MediaPipe Holistic${source.version}初期化エラー:`, err);
+          setMediaLibraryStatus(`MediaPipe Holistic${source.version}の読み込み失敗`);
           error = err;
         }
       }
@@ -630,6 +645,7 @@ export function MotionAnalyzer() {
       console.error('MediaPipe Holistic初期化エラー:', err);
       setError(`MediaPipe初期化エラー: ${err instanceof Error ? err.message : '不明なエラー'}`);
       setHolisticLoaded(false);
+      setMediaLibraryStatus('初期化に失敗しました');
     }
   }, [onResults]);
   
@@ -664,9 +680,10 @@ export function MotionAnalyzer() {
       processedFramesRef.current = [];
       setProcessingUrl(null);
       setAnalysisResult(null);
+      setWaitingForStart(false);
       
       // MediaPipe Holisticの初期化を開始
-      console.log('MediaPipe Holisticを初期化します...');
+      console.log('MediaPipe Holisticを再初期化します...');
       await initHolistic();
       
       // 動画URLを作成し、video要素に設定
@@ -701,23 +718,35 @@ export function MotionAnalyzer() {
         videoRef.current.style.width = `${displayWidth}px`;
         videoRef.current.style.height = `${displayHeight}px`;
         
-        setProgress('動画の処理準備ができました。解析を開始します...');
+        // モバイルかどうか検出
+        const isMobile = /iPhone|iPad|iPod|Android|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        
+        // モバイルの場合は自動再生せずユーザーに開始ボタンを提供
+        if (isMobile) {
+          setWaitingForStart(true);
+          setProgress('動画の処理準備ができました。下のボタンから解析を開始してください');
+        } else {
+          setProgress('動画の処理準備ができました。解析を開始します...');
+        }
       };
       
       videoRef.current.oncanplay = () => {
         console.log('動画の再生準備ができました');
         setVideoLoaded(true);
         
-        if (videoRef.current) {
+        // PCの場合は自動開始
+        const isMobile = /iPhone|iPad|iPod|Android|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        if (!isMobile && videoRef.current) {
           // 動画の再生を開始し、フレーム処理を開始
           videoRef.current.play().then(() => {
-            console.log('動画再生開始');
+            console.log('動画再生開始 (自動)');
             startFrameCapture();
             setProgress('動画を処理中...');
           }).catch(err => {
-            console.error('動画再生エラー:', err);
-            setError(`動画再生エラー: ${err instanceof Error ? err.message : '不明なエラー'}`);
-            setIsProcessing(false);
+            console.error('動画自動再生エラー:', err);
+            // 自動再生に失敗した場合はユーザー操作による開始に切り替え
+            setWaitingForStart(true);
+            setProgress('動画の再生を開始するにはボタンをクリックしてください');
           });
         }
       };
@@ -771,6 +800,34 @@ export function MotionAnalyzer() {
     }
   };
   
+  // ユーザーが明示的に解析を開始する
+  const handleStartAnalysis = () => {
+    if (!videoRef.current || !canvasRef.current || !holisticRef.current) {
+      setError('内部コンポーネントの準備ができていません');
+      return;
+    }
+    
+    setWaitingForStart(false);
+    setProgress('解析を開始しています...');
+    
+    // モバイルでの自動再生ブロックを回避するため、ユーザー操作から直接開始
+    if (videoRef.current) {
+      // 念のためリセット
+      videoRef.current.currentTime = 0;
+      
+      // 動画を再生
+      videoRef.current.play().then(() => {
+        console.log('動画再生開始 (手動)');
+        startFrameCapture();
+        setProgress('動画を処理中...');
+      }).catch(err => {
+        console.error('動画再生エラー:', err);
+        setError(`動画再生エラー: ${err instanceof Error ? err.message : '不明なエラー'}`);
+        setIsProcessing(false);
+      });
+    }
+  };
+  
   // フレームキャプチャの開始
   const startFrameCapture = () => {
     if (!videoRef.current || !canvasRef.current || !holisticRef.current) {
@@ -785,8 +842,13 @@ export function MotionAnalyzer() {
     
     // 最後の処理時間を記録
     let lastProcessTime = 0;
-    // 目標フレームレート（動画と同期するために高めに設定）
-    const targetFPS = 30; // 24から30に変更
+    
+    // モバイルの場合はさらに低いフレームレートを設定（パフォーマンス向上）
+    const isMobile = /iPhone|iPad|iPod|Android|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    // 目標フレームレート（動画と同期するために高めに設定 - モバイルの場合は低めに）
+    const targetFPS = isMobile ? 15 : 30; // モバイルは15FPS、PC環境は30FPS
+    
     // フレーム間の最小時間（ミリ秒）
     const frameInterval = 1000 / targetFPS;
     
@@ -804,8 +866,20 @@ export function MotionAnalyzer() {
             await new Promise(resolve => setTimeout(resolve, 0));
             
             // 現在のビデオフレームをHolisticに送信
-            if (holisticRef.current) {
-              await holisticRef.current.send({image: videoRef.current});
+            if (holisticRef.current && videoRef.current) {
+              // ここでの処理は重いので、モバイルの場合は間引く
+              if (isMobile && currentFrameRef.current % 2 !== 0) {
+                // モバイルの場合は2フレームに1回だけ処理
+                frameCapturerRef.current = requestAnimationFrame(captureAndProcessFrame);
+                return;
+              }
+              
+              try {
+                await holisticRef.current.send({image: videoRef.current});
+              } catch (err) {
+                console.warn('フレーム処理エラー（1回スキップ）:', err);
+                // エラーが発生しても継続
+              }
             }
           }
           
@@ -813,12 +887,15 @@ export function MotionAnalyzer() {
           frameCapturerRef.current = requestAnimationFrame(captureAndProcessFrame);
         } catch (err) {
           console.error('Frame processing error:', err);
-          stopFrameCapture();
-          setError(`フレーム処理エラー: ${err instanceof Error ? err.message : '不明なエラー'}`);
+          // エラーが起きても処理は継続
+          frameCapturerRef.current = requestAnimationFrame(captureAndProcessFrame);
         }
       } else if (videoRef.current && videoRef.current.ended) {
         // 動画が終了した場合
         stopFrameCapture();
+      } else {
+        // ビデオが一時停止中など、まだ終了していない場合は継続
+        frameCapturerRef.current = requestAnimationFrame(captureAndProcessFrame);
       }
     };
     
@@ -1568,6 +1645,9 @@ export function MotionAnalyzer() {
               <p className="text-center text-sm text-gray-500">
                 動画ファイル（MP4、WebM、MOVなど）を選択してください
               </p>
+              <p className="text-center text-xs text-blue-500">
+                MediaPipe状態: {mediaLibraryStatus}
+              </p>
             </>
           ) : null}
 
@@ -1577,6 +1657,17 @@ export function MotionAnalyzer() {
                 <Loader2 className="h-5 w-5 animate-spin" />
                 <p className="text-lg">{progress}</p>
               </div>
+              
+              {/* 解析開始ボタン - モバイル用 */}
+              {waitingForStart && (
+                <Button
+                  onClick={handleStartAnalysis}
+                  className="mt-4 bg-green-600 hover:bg-green-700 text-white"
+                >
+                  <Play className="h-5 w-5 mr-2" />
+                  解析を開始する
+                </Button>
+              )}
             </div>
           )}
 
@@ -1586,6 +1677,8 @@ export function MotionAnalyzer() {
               className="hidden" 
               playsInline
               muted
+              autoPlay={false}
+              preload="auto"
             />
             <canvas 
               ref={canvasRef} 
