@@ -686,112 +686,184 @@ export function MotionAnalyzer() {
       console.log('MediaPipe Holisticを再初期化します...');
       await initHolistic();
       
-      // 動画URLを作成し、video要素に設定
-      const videoURL = URL.createObjectURL(file);
-      videoRef.current.src = videoURL;
-      
-      videoRef.current.onloadedmetadata = () => {
-        console.log('動画メタデータが読み込まれました, 長さ:', videoRef.current?.duration || 0);
+      // ビデオ要素をリセット
+      if (videoRef.current) {
+        // 既存のイベントリスナーをクリア
+        const videoElement = videoRef.current;
+        const oldSrc = videoElement.src;
         
-        if (!videoRef.current || !canvasRef.current) return;
-        
-        // キャンバスサイズを動画サイズに合わせる
-        canvasRef.current.width = videoRef.current.videoWidth;
-        canvasRef.current.height = videoRef.current.videoHeight;
-        
-        // 出力用キャンバスも同じサイズに設定
-        if (outputCanvasRef.current) {
-          outputCanvasRef.current.width = videoRef.current.videoWidth;
-          outputCanvasRef.current.height = videoRef.current.videoHeight;
+        if (oldSrc) {
+          URL.revokeObjectURL(oldSrc);
+          videoElement.src = '';
+          videoElement.load();
         }
         
-        // アスペクト比を維持しながら表示サイズを調整
-        const aspectRatio = videoRef.current.videoWidth / videoRef.current.videoHeight;
-        const maxWidth = 800; // 最大表示幅
-        let displayWidth = Math.min(maxWidth, videoRef.current.videoWidth);
-        let displayHeight = displayWidth / aspectRatio;
+        // ハードウェアアクセラレーション対策を適用
+        disableHardwareAcceleration(videoElement);
         
-        canvasRef.current.style.width = `${displayWidth}px`;
-        canvasRef.current.style.height = `${displayHeight}px`;
+        // CORS設定を追加
+        videoElement.crossOrigin = "anonymous";
         
-        // ビデオ要素は非表示だが、同じサイズに設定（処理のため）
-        videoRef.current.style.width = `${displayWidth}px`;
-        videoRef.current.style.height = `${displayHeight}px`;
+        // データURLとしてファイルを読み込む（クロスオリジン問題を回避）
+        const reader = new FileReader();
         
-        // モバイルかどうか検出
-        const isMobile = /iPhone|iPad|iPod|Android|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-        
-        // モバイルの場合は自動再生せずユーザーに開始ボタンを提供
-        if (isMobile) {
-          setWaitingForStart(true);
-          setProgress('動画の処理準備ができました。下のボタンから解析を開始してください');
-        } else {
-          setProgress('動画の処理準備ができました。解析を開始します...');
-        }
-      };
-      
-      videoRef.current.oncanplay = () => {
-        console.log('動画の再生準備ができました');
-        setVideoLoaded(true);
-        
-        // PCの場合は自動開始
-        const isMobile = /iPhone|iPad|iPod|Android|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-        if (!isMobile && videoRef.current) {
-          // 動画の再生を開始し、フレーム処理を開始
-          videoRef.current.play().then(() => {
-            console.log('動画再生開始 (自動)');
-            startFrameCapture();
-            setProgress('動画を処理中...');
-          }).catch(err => {
-            console.error('動画自動再生エラー:', err);
-            // 自動再生に失敗した場合はユーザー操作による開始に切り替え
-            setWaitingForStart(true);
-            setProgress('動画の再生を開始するにはボタンをクリックしてください');
-          });
-        }
-      };
-      
-      videoRef.current.onerror = () => {
-        console.error('動画読み込みエラー');
-        setError('動画の読み込みに失敗しました');
-        setIsProcessing(false);
-      };
-      
-      // 動画終了時のハンドラ
-      videoRef.current.onended = () => {
-        console.log('動画再生終了');
-        stopFrameCapture();
-        
-        // 処理終了時に蓄積したデータを一括で反映
-        console.log(`処理終了: 記録したモーションデータ数 = ${tempMotionDataRef.current.length}`);
-        
-        // 最終的なデータを状態に反映
-        setMotionTrackingData([...tempMotionDataRef.current]);
-        
-        setIsCapturing(false);
-        setProgress('処理完了');
-        setIsProcessing(false);
-        
-        // 検出率の最終計算
-        const finalRate = Math.round((detectedFramesRef.current / currentFrameRef.current) * 100);
-        setDetectionRate(finalRate);
-        
-        // 分析結果を生成
-        if (videoRef.current) {
-          const result: MotionAnalysisResult = {
-            sessionId,
-            frameCount: currentFrameRef.current,
-            duration: videoRef.current.duration,
-            frameRate: currentFrameRef.current / (videoRef.current.duration || 1),
-            createdAt: new Date().toISOString(),
-            videoSize: {
-              width: videoRef.current.videoWidth,
-              height: videoRef.current.videoHeight
+        // 読み込み完了時のハンドラ
+        reader.onload = (event) => {
+          if (!event.target || !event.target.result) {
+            setError('ファイルの読み込みに失敗しました');
+            setIsProcessing(false);
+            return;
+          }
+          
+          const dataUrl = event.target.result as string;
+          
+          // メタデータ読み込み時の処理
+          videoElement.onloadedmetadata = () => {
+            console.log('動画メタデータが読み込まれました, 長さ:', videoElement.duration || 0);
+            
+            if (!videoElement || !canvasRef.current) return;
+            
+            // キャンバスサイズを動画サイズに合わせる
+            canvasRef.current.width = videoElement.videoWidth;
+            canvasRef.current.height = videoElement.videoHeight;
+            
+            // 出力用キャンバスも同じサイズに設定
+            if (outputCanvasRef.current) {
+              outputCanvasRef.current.width = videoElement.videoWidth;
+              outputCanvasRef.current.height = videoElement.videoHeight;
+            }
+            
+            // アスペクト比を維持しながら表示サイズを調整
+            const aspectRatio = videoElement.videoWidth / videoElement.videoHeight;
+            const maxWidth = 800; // 最大表示幅
+            let displayWidth = Math.min(maxWidth, videoElement.videoWidth);
+            let displayHeight = displayWidth / aspectRatio;
+            
+            canvasRef.current.style.width = `${displayWidth}px`;
+            canvasRef.current.style.height = `${displayHeight}px`;
+            
+            // ビデオ要素は非表示だが、同じサイズに設定（処理のため）
+            videoElement.style.width = `${displayWidth}px`;
+            videoElement.style.height = `${displayHeight}px`;
+            
+            // モバイルかどうか検出
+            const isMobile = /iPhone|iPad|iPod|Android|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+            
+            // モバイルの場合は自動再生せずユーザーに開始ボタンを提供
+            if (isMobile) {
+              setWaitingForStart(true);
+              setProgress('動画の処理準備ができました。下のボタンから解析を開始してください');
+            } else {
+              setProgress('動画の処理準備ができました。解析を開始します...');
             }
           };
-          setAnalysisResult(result);
-        }
-      };
+          
+          // 再生準備完了時の処理
+          videoElement.oncanplay = () => {
+            console.log('動画の再生準備ができました');
+            setVideoLoaded(true);
+            
+            // PCの場合は自動開始
+            const isMobile = /iPhone|iPad|iPod|Android|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+            if (!isMobile && videoElement) {
+              // 動画の再生を開始し、フレーム処理を開始
+              videoElement.play().then(() => {
+                console.log('動画再生開始 (自動)');
+                startFrameCapture();
+                setProgress('動画を処理中...');
+              }).catch(err => {
+                console.error('動画自動再生エラー:', err);
+                // 自動再生に失敗した場合はユーザー操作による開始に切り替え
+                setWaitingForStart(true);
+                setProgress('動画の再生を開始するにはボタンをクリックしてください');
+              });
+            }
+          };
+          
+          // エラー発生時のハンドラ
+          videoElement.onerror = (ev) => {
+            console.error('動画読み込みエラー:', videoElement.error);
+            
+            let errorMessage = '動画の読み込みに失敗しました。';
+            
+            // 詳細なエラー情報を取得
+            if (videoElement.error) {
+              const errCode = videoElement.error.code;
+              switch(errCode) {
+                case 1:
+                  errorMessage += '操作が中断されました。';
+                  break;
+                case 2:
+                  errorMessage += 'ネットワークエラーが発生しました。';
+                  break;
+                case 3:
+                  errorMessage += 'デコードエラー：フォーマットがサポートされていないか、ファイルが破損している可能性があります。';
+                  break;
+                case 4:
+                  errorMessage += 'ソースが見つからないか、アクセスできません。別の動画ファイルを試してください。';
+                  break;
+                default:
+                  errorMessage += 'フォーマットがサポートされていないか、ファイルが破損している可能性があります。';
+              }
+            }
+            
+            setError(errorMessage);
+            setIsProcessing(false);
+          };
+          
+          // 動画終了時のハンドラ
+          videoElement.onended = () => {
+            console.log('動画再生終了');
+            stopFrameCapture();
+            
+            // 処理終了時に蓄積したデータを一括で反映
+            console.log(`処理終了: 記録したモーションデータ数 = ${tempMotionDataRef.current.length}`);
+            
+            // 最終的なデータを状態に反映
+            setMotionTrackingData([...tempMotionDataRef.current]);
+            
+            setIsCapturing(false);
+            setProgress('処理完了');
+            setIsProcessing(false);
+            
+            // 検出率の最終計算
+            const finalRate = Math.round((detectedFramesRef.current / currentFrameRef.current) * 100);
+            setDetectionRate(finalRate);
+            
+            // 分析結果を生成
+            if (videoElement) {
+              const result: MotionAnalysisResult = {
+                sessionId,
+                frameCount: currentFrameRef.current,
+                duration: videoElement.duration,
+                frameRate: currentFrameRef.current / (videoElement.duration || 1),
+                createdAt: new Date().toISOString(),
+                videoSize: {
+                  width: videoElement.videoWidth,
+                  height: videoElement.videoHeight
+                }
+              };
+              setAnalysisResult(result);
+            }
+          };
+          
+          // データURLをビデオソースとして設定
+          videoElement.src = dataUrl;
+          
+          // 明示的に読み込みを開始
+          videoElement.load();
+          console.log('データURLからビデオを読み込み開始');
+        };
+        
+        // エラーハンドラ
+        reader.onerror = () => {
+          setError('ファイルの読み込みに失敗しました。別のファイルを試してください。');
+          setIsProcessing(false);
+        };
+        
+        // ファイルの読み込みを開始（データURLとして）
+        reader.readAsDataURL(file);
+      }
       
     } catch (err) {
       console.error('動画処理エラー:', err);
@@ -875,7 +947,7 @@ export function MotionAnalyzer() {
               }
               
               try {
-                await holisticRef.current.send({image: videoRef.current});
+              await holisticRef.current.send({image: videoRef.current});
               } catch (err) {
                 console.warn('フレーム処理エラー（1回スキップ）:', err);
                 // エラーが発生しても継続
@@ -1224,8 +1296,8 @@ export function MotionAnalyzer() {
               selectedMimeType = mt;
               canUseMediaRecorder = true;
               console.log(`サポートされたMIMEタイプ: ${mt}`);
-              break;
-            }
+          break;
+        }
           } catch (e) {
             console.warn(`MIMEタイプチェックエラー: ${mt}`, e);
           }
@@ -1456,7 +1528,7 @@ export function MotionAnalyzer() {
       
       // 動画エンコーダの設定
       try {
-        mediaRecorderRef.current = new MediaRecorder(stream, options);
+      mediaRecorderRef.current = new MediaRecorder(stream, options);
       } catch (err) {
         console.warn('MediaRecorder作成エラー、最低限のオプションで再試行:', err);
         // オプションなしで再試行
@@ -1530,9 +1602,9 @@ export function MotionAnalyzer() {
         ) {
           console.log(`描画完了: ${frameIndex}/${totalFrames}フレーム, 経過=${elapsedSinceStart.toFixed(0)}ms`);
           setTimeout(() => {
-            if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-              mediaRecorderRef.current.stop();
-            }
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+            mediaRecorderRef.current.stop();
+          }
           }, 1000);
           return;
         }
@@ -1552,7 +1624,7 @@ export function MotionAnalyzer() {
               outputCtx.putImageData(frame, 0, 0);
               frameIndex = idealFrameIndex + 1;
             } else {
-              frameIndex++;
+        frameIndex++;
             }
           } catch (err) {
             console.error('フレーム描画エラー:', err);
@@ -1608,6 +1680,36 @@ export function MotionAnalyzer() {
       }
     };
   }, [processingUrl, processedVideoUrl]);
+
+  // ハードウェアアクセラレーション関連の問題を回避するためのヘルパー関数
+  const disableHardwareAcceleration = useCallback((videoElement: HTMLVideoElement) => {
+    try {
+      // スタイルを使って高速化機能を無効化
+      videoElement.style.transform = 'translateZ(0)';
+      
+      // iOS/Safariの場合は特別な対応
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+      
+      if (isIOS || isSafari) {
+        // iOS/Safariでのビデオ処理を最適化
+        videoElement.playsInline = true;
+        videoElement.setAttribute('playsinline', 'true');
+        videoElement.setAttribute('webkit-playsinline', 'true');
+      }
+      
+      // Windows特有の設定（Windows 11対応）
+      const isWindows = /Windows/.test(navigator.userAgent);
+      if (isWindows) {
+        // Windows環境での特別な対応
+        videoElement.style.isolation = 'isolate'; // レンダリングの問題を軽減
+      }
+      
+      console.log('ハードウェアアクセラレーション対策を適用しました');
+    } catch (e) {
+      console.warn('ハードウェアアクセラレーション設定エラー:', e);
+    }
+  }, []);
 
   return (
     <Card>
