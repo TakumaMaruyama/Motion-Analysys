@@ -376,14 +376,14 @@ export function MotionAnalyzer() {
     // ポーズのランドマークを描画
     if (results.poseLandmarks) {
       mpDrawLandmarks(ctx, results.poseLandmarks, {
-        color: '#00FF00',
+          color: '#00FF00',
         lineWidth: 3,
         radius: 6,
         visibilityMin: 0.6
       });
       
       mpDrawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, {
-        color: '#00FF00',
+          color: '#00FF00',
         lineWidth: 3
       });
       
@@ -417,7 +417,7 @@ export function MotionAnalyzer() {
     // 顔のランドマークを描画
     if (results.faceLandmarks) {
       mpDrawLandmarks(ctx, results.faceLandmarks, {
-        color: '#FF3030',
+          color: '#FF3030',
         lineWidth: 1,
         radius: 1,
         visibilityMin: 0.75
@@ -432,13 +432,13 @@ export function MotionAnalyzer() {
     // 手のランドマークを描画
     if (results.rightHandLandmarks) {
       mpDrawLandmarks(ctx, results.rightHandLandmarks, {
-        color: '#00FFFF',
+          color: '#00FFFF',
         lineWidth: 2,
         radius: 3
       });
       
       mpDrawConnectors(ctx, results.rightHandLandmarks, HAND_CONNECTIONS, {
-        color: '#00FFFF',
+          color: '#00FFFF',
         lineWidth: 2
       });
       
@@ -450,13 +450,13 @@ export function MotionAnalyzer() {
     
     if (results.leftHandLandmarks) {
       mpDrawLandmarks(ctx, results.leftHandLandmarks, {
-        color: '#FFFF00',
+          color: '#FFFF00',
         lineWidth: 2,
         radius: 3
       });
       
       mpDrawConnectors(ctx, results.leftHandLandmarks, HAND_CONNECTIONS, {
-        color: '#FFFF00',
+          color: '#FFFF00',
         lineWidth: 2
       });
       
@@ -480,9 +480,9 @@ export function MotionAnalyzer() {
     drawFrameInfo(ctx);
     
     // 処理済みフレームを保存
-    try {
+      try {
       const startTime = performance.now();
-      const imageData = ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
+        const imageData = ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
       const timestamp = videoRef.current?.currentTime || 0;
       
       // メモリ使用量を考慮して上限を設定
@@ -504,8 +504,8 @@ export function MotionAnalyzer() {
           console.log(`保存済みフレーム数: ${processedFramesRef.current.length}, 現在時刻: ${timestamp.toFixed(3)}秒`);
         }
       }
-    } catch (e) {
-      console.warn('フレーム保存エラー:', e);
+      } catch (e) {
+        console.warn('フレーム保存エラー:', e);
     }
   }, []);
   
@@ -673,10 +673,14 @@ export function MotionAnalyzer() {
             // h264コーデックをサポートしているか確認
             if (!MediaRecorder.isTypeSupported(options.mimeType)) {
               // サポートされていない場合は別のコーデックを試す
-              options.mimeType = 'video/webm;codecs=vp9';
+              options.mimeType = 'video/mp4';
               
               if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                options.mimeType = 'video/webm';
+                options.mimeType = 'video/webm;codecs=vp9';
+                
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                  options.mimeType = 'video/webm';
+                }
               }
             }
             
@@ -698,7 +702,7 @@ export function MotionAnalyzer() {
           // 録画完了時の処理
           recorder.onstop = () => {
             // 録画データからBlobを作成
-            const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
+            const blob = new Blob(chunks, { type: 'video/mp4' });
             
             // URLを作成
             const url = URL.createObjectURL(blob);
@@ -708,7 +712,7 @@ export function MotionAnalyzer() {
             // ダウンロードリンク
             const a = document.createElement('a');
             a.href = url;
-            a.download = `${sessionId}_processed_video.webm`;
+            a.download = `${sessionId}_processed_video.mp4`;
             a.click();
             
             // クリーンアップ
@@ -839,11 +843,11 @@ export function MotionAnalyzer() {
       // サポートされているMIMEタイプを探す
       let selectedMimeType = '';
       for (const mt of supportedMimeTypes) {
-        if (MediaRecorder.isTypeSupported(mt)) {
-          selectedMimeType = mt;
-          console.log(`サポートされているMIMEタイプ: ${mt}`);
-          break;
-        }
+          if (MediaRecorder.isTypeSupported(mt)) {
+            selectedMimeType = mt;
+            console.log(`サポートされているMIMEタイプ: ${mt}`);
+            break;
+          }
       }
       
       // メディアレコーダーオプションの設定
@@ -867,24 +871,24 @@ export function MotionAnalyzer() {
       
       // 録画終了時の処理
       mediaRecorder.onstop = () => {
-        // 録画データを結合
+          // 録画データを結合
         const videoBlob = new Blob(chunks, { type: 'video/mp4' });
-        console.log(`生成された動画サイズ: ${(videoBlob.size / (1024 * 1024)).toFixed(2)} MB`);
-        
+          console.log(`生成された動画サイズ: ${(videoBlob.size / (1024 * 1024)).toFixed(2)} MB`);
+          
         // 動画URLを生成
         const url = URL.createObjectURL(videoBlob);
-        setProcessingUrl(url);
-        
+          setProcessingUrl(url);
+          
         // ダウンロードリンクを自動作成
-        const a = document.createElement('a');
-        a.href = url;
+          const a = document.createElement('a');
+          a.href = url;
         a.download = `${sessionId}_processed_video.mp4`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        
-        setProgress('動画の生成が完了しました！');
-        setIsCreatingVideo(false);
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          
+          setProgress('動画の生成が完了しました！');
+          setIsCreatingVideo(false);
       };
       
       // 録画開始
@@ -939,7 +943,7 @@ export function MotionAnalyzer() {
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    
+
     // ファイル形式の検証
     const validFormats = ['video/mp4', 'video/quicktime', 'video/webm'];
     
@@ -1365,19 +1369,19 @@ export function MotionAnalyzer() {
           console.warn(`フレームドロップ数: ${droppedFrames}`);
         }
         frameCapturerRef.current = requestAnimationFrame(processFrame);
-        return;
-      }
-      
-      try {
+                return;
+              }
+              
+              try {
         processingFrame = true;
         
         // MediaPipeに送信
         if (holisticRef.current && videoRef.current) {
-          await holisticRef.current.send({image: videoRef.current});
-        }
-        
+              await holisticRef.current.send({image: videoRef.current});
+          }
+          
         processingFrame = false;
-      } catch (err) {
+        } catch (err) {
         console.warn('フレーム処理エラー:', err);
         processingFrame = false;
       }
@@ -1699,7 +1703,7 @@ export function MotionAnalyzer() {
                 クリックして動画をアップロード
               </Button>
               <p className="text-center text-sm text-gray-500">
-                動画ファイル（MP4、WebM、MOVなど）を選択してください
+                動画ファイル（MP4、MOV、WebMなど）を選択してください
               </p>
               <p className="text-center text-xs text-blue-500">
                 MediaPipe状態: {mediaLibraryStatus}
@@ -1866,7 +1870,7 @@ export function MotionAnalyzer() {
             <ul className="list-disc list-inside mt-2 space-y-1">
               <li>アップロードした動画にランドマークを重ねて表示</li>
               <li>動画内の動きを検出して骨格を追従</li>
-              <li>処理結果をMP4/WebM形式で保存可能</li>
+              <li>処理結果をMP4形式で保存可能</li>
               <li>データはすべてローカルで処理（サーバーには送信されません）</li>
             </ul>
           </div>

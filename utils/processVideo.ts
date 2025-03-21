@@ -182,8 +182,7 @@ export async function processVideo(videoBlob: Blob) {
     // MediaRecorderでキャプチャ
     const chunks: Blob[] = [];
     const mediaRecorder = new MediaRecorder(captureCanvas.captureStream(video.videoWidth), {
-      mimeType: 'video/webm;codecs=vp9',
-      videoBitsPerSecond: 3000000 // 元動画と同じ画質を維持するための設定
+      mimeType: 'video/mp4;codecs=h264',
     });
     
     mediaRecorder.ondataavailable = (e) => {
@@ -196,7 +195,7 @@ export async function processVideo(videoBlob: Blob) {
     
     await new Promise<void>(async (resolve) => {
       mediaRecorder.onstop = () => {
-        const processedBlob = new Blob(chunks, { type: 'video/webm' });
+        const processedBlob = new Blob(chunks, { type: 'video/mp4' });
         processedVideoUrl = URL.createObjectURL(processedBlob);
         resolve();
       };

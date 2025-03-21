@@ -429,8 +429,9 @@ const SimpleMotionAnalyzer: React.FC = () => {
         
         // Blobの作成
         const mimeType = mediaRecorder.mimeType || 'video/webm';
-        console.log(`Blob作成: MIMEタイプ=${mimeType}`);
+        const extension = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
         const blob = new Blob(chunks, { type: mimeType });
+        const url = URL.createObjectURL(blob);
         
         console.log(`最終Blobサイズ: ${blob.size} バイト、タイプ: ${blob.type}`);
         
@@ -438,6 +439,11 @@ const SimpleMotionAnalyzer: React.FC = () => {
           const url = URL.createObjectURL(blob);
           console.log('Blob URL作成:', url);
           setOutputVideoUrl(url);
+          
+          // 自動ダウンロード
+          setTimeout(() => {
+            downloadVideo();
+          }, 500);
         } else {
           console.error('Blobのサイズが0です');
         }
@@ -1103,8 +1109,9 @@ const SimpleMotionAnalyzer: React.FC = () => {
         
         // Blobの作成
         const mimeType = mediaRecorder.mimeType || 'video/webm';
-        console.log(`Blob作成: MIMEタイプ=${mimeType}`);
+        const extension = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
         const blob = new Blob(chunks, { type: mimeType });
+        const url = URL.createObjectURL(blob);
         
         console.log(`最終Blobサイズ: ${blob.size} バイト、タイプ: ${blob.type}`);
         
@@ -1186,7 +1193,30 @@ const SimpleMotionAnalyzer: React.FC = () => {
       const stream = canvas.captureStream(30); // 30fpsで録画
       
       // MediaRecorderのオプション設定
-      const options = { mimeType: 'video/webm;codecs=vp9', videoBitsPerSecond: 5000000 };
+      const supportedTypes = [
+        'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
+        'video/webm;codecs=h264',
+        'video/webm',
+        'video/mp4;codecs=h264',
+        'video/mp4'
+      ];
+      
+      // サポートされているMIMEタイプを探す
+      let options = {};
+      for (const type of supportedTypes) {
+        if (MediaRecorder.isTypeSupported(type)) {
+          options = {
+            mimeType: type,
+            videoBitsPerSecond: 5000000
+          };
+          console.log(`使用するコーデック: ${type}`);
+          break;
+        }
+      }
+      
+      // MediaRecorderインスタンスの作成
+      console.log('MediaRecorder作成', options);
       const mediaRecorder = new MediaRecorder(stream, options);
       
       // データ収集用の配列
@@ -1202,13 +1232,15 @@ const SimpleMotionAnalyzer: React.FC = () => {
       // 録画が完了したら動画をダウンロード
       mediaRecorder.onstop = () => {
         // 動画の生成
-        const blob = new Blob(chunks, { type: 'video/webm' });
+        const mimeType = mediaRecorder.mimeType || 'video/webm';
+        const extension = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
+        const blob = new Blob(chunks, { type: mimeType });
         const url = URL.createObjectURL(blob);
         
         // ダウンロードリンクを生成して自動的にクリック
         const a = document.createElement('a');
         a.href = url;
-        a.download = `motion-analysis-recording-${new Date().toISOString().replace(/:/g, '-')}.webm`;
+        a.download = `motion-analysis-recording-${new Date().toISOString().replace(/:/g, '-')}.${extension}`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
