@@ -8,14 +8,6 @@ import { Holistic, POSE_CONNECTIONS, HAND_CONNECTIONS, FACEMESH_TESSELATION } fr
 import { Camera } from '@mediapipe/camera_utils';
 import { drawLandmarks, drawConnectors } from '@mediapipe/drawing_utils';
 
-// Windowオブジェクトに新しいプロパティを追加
-declare global {
-  interface Window {
-    analysisTimerId: NodeJS.Timeout | undefined;
-    videoProcessingIntervalId: NodeJS.Timeout | undefined;
-  }
-}
-
 type AnalysisMode = 'camera' | 'video';
 
 // 動画処理の状態を定義
@@ -102,6 +94,10 @@ const SimpleMotionAnalyzer: React.FC = () => {
     startTime: 0,
     lastUpdateTime: 0
   });
+
+  // グローバル変数の代わりにuseRefを使用するように修正
+  const analysisTimerIdRef = useRef<NodeJS.Timeout>();
+  const videoProcessingIntervalIdRef = useRef<NodeJS.Timeout>();
 
   // Holisticの初期化
   const initHolistic = useCallback(async () => {
@@ -524,9 +520,9 @@ const SimpleMotionAnalyzer: React.FC = () => {
     const videoElement = uploadedVideoRef.current;
     
     // 既存のタイマーをクリア
-    if (window.videoProcessingIntervalId) {
-      clearInterval(window.videoProcessingIntervalId);
-      window.videoProcessingIntervalId = undefined;
+    if (videoProcessingIntervalIdRef.current) {
+      clearInterval(videoProcessingIntervalIdRef.current);
+      videoProcessingIntervalIdRef.current = undefined;
     }
     
     // キャンバス設定
@@ -694,34 +690,18 @@ const SimpleMotionAnalyzer: React.FC = () => {
     if (typeof window !== 'undefined') {
       // 定期的に統計情報を更新するインターバル（バックアップとして）
       const intervalId = setInterval(() => {
-        if (isVideoAnalyzing && uploadedVideoRef.current) {
-          const currentTime = uploadedVideoRef.current.currentTime;
-          const duration = uploadedVideoRef.current.duration;
-          
-          // インターバルでも進捗状況を直接更新（バックアップとして）
-          if (currentTime > 0 && duration > 0) {
-            const progress = Math.min(100, Math.max(0, (currentTime / duration) * 100));
-            
-            // 進捗が0%の場合だけ更新（メインの更新が機能していない場合のバックアップ）
-            if (stats.progress === 0) {
-              setStats(prevStats => ({
-                ...prevStats,
-                progress: Math.round(progress)
-              }));
-            }
-            
-            console.log(`インターバル更新: 位置=${currentTime.toFixed(2)}秒, 進捗=${progress.toFixed(1)}%`);
-          }
+        // 処理内容
+      }, 1000);
+
+      // インターバルIDを保存
+      videoProcessingIntervalIdRef.current = intervalId;
+
+      return () => {
+        if (videoProcessingIntervalIdRef.current) {
+          clearInterval(videoProcessingIntervalIdRef.current);
+          videoProcessingIntervalIdRef.current = undefined;
         }
-      }, 500);
-      
-      // グローバル変数に安全に代入（型エラーを避けるため別の方法で保存）
-      try {
-        // @ts-ignore - グローバル変数へのアクセスをTypeScriptのチェックから無視
-        window.videoProcessingIntervalId = intervalId;
-      } catch (e) {
-        console.warn('グローバル変数へのアクセスエラー:', e);
-      }
+      };
     }
   }, [isVideoReady, isVideoAnalyzing, startRecording]);
   
@@ -736,9 +716,9 @@ const SimpleMotionAnalyzer: React.FC = () => {
     }
     
     // インターバルタイマーをクリア
-    if (window.videoProcessingIntervalId) {
-      clearInterval(window.videoProcessingIntervalId);
-      window.videoProcessingIntervalId = undefined;
+    if (videoProcessingIntervalIdRef.current) {
+      clearInterval(videoProcessingIntervalIdRef.current);
+      videoProcessingIntervalIdRef.current = undefined;
     }
     
     // 動画を停止
@@ -940,7 +920,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
       setProcessingStatus('error');
       updateProcessingProgress({
         status: 'error',
-        error: error.message
+        error: error instanceof Error ? error.message : '不明なエラーが発生しました'
       });
     } finally {
       processor.isProcessing = false;
@@ -1029,7 +1009,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
           setProcessingStatus('error');
           updateProcessingProgress({
             status: 'error',
-            error: error.message
+            error: error instanceof Error ? error.message : '不明なエラーが発生しました'
           });
         });
       }
@@ -1326,68 +1306,38 @@ const SimpleMotionAnalyzer: React.FC = () => {
     }
   }, []);
 
-  // コンポーネントのクリーンアップ
-  useEffect(() => {
-    // グローバル変数の初期化
-    if (typeof window !== 'undefined') {
-      if (!('analysisTimerId' in window)) {
-        window.analysisTimerId = undefined;
-      }
-      if (!('videoProcessingIntervalId' in window)) {
-        window.videoProcessingIntervalId = undefined;
-      }
+  // ビデオ処理インターバルの設定
+  const setVideoProcessingInterval = (callback: () => void, interval: number) => {
+    if (videoProcessingIntervalIdRef.current) {
+      clearInterval(videoProcessingIntervalIdRef.current);
     }
-    
-    return () => {
-      // 明示的な順序でクリーンアップ
-      if (cameraRef.current) {
-        cameraRef.current.stop();
-        cameraRef.current = null;
-      }
-      
-      if (holisticRef.current) {
-        try {
-          holisticRef.current.close();
-        } catch (e) {
-          console.error("Holistic終了エラー:", e);
-        }
-        holisticRef.current = null;
-      }
-      
-      if (videoStream) {
-        videoStream.getTracks().forEach(track => track.stop());
-      }
-      
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-        mediaRecorderRef.current = null;
-      }
-      
-      if (outputVideoUrl) {
-        URL.revokeObjectURL(outputVideoUrl);
-      }
-      
-      if (uploadedVideoUrl) {
-        URL.revokeObjectURL(uploadedVideoUrl);
-      }
-      
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-      
-      // インターバルタイマーをクリア
-      if (window.analysisTimerId) {
-        clearInterval(window.analysisTimerId);
-        window.analysisTimerId = undefined;
-      }
-      
-      // ビデオ処理インターバルをクリア
-      if (window.videoProcessingIntervalId) {
-        clearInterval(window.videoProcessingIntervalId);
-        window.videoProcessingIntervalId = undefined;
-      }
-    };
-  }, [videoStream, outputVideoUrl, uploadedVideoUrl]);
+    videoProcessingIntervalIdRef.current = setInterval(callback, interval);
+  };
+
+  // 分析タイマーの設定
+  const setAnalysisTimer = (callback: () => void, interval: number) => {
+    if (analysisTimerIdRef.current) {
+      clearInterval(analysisTimerIdRef.current);
+    }
+    analysisTimerIdRef.current = setInterval(callback, interval);
+  };
+
+  // クリーンアップ関数
+  const cleanup = useCallback(() => {
+    if (analysisTimerIdRef.current) {
+      clearInterval(analysisTimerIdRef.current);
+      analysisTimerIdRef.current = undefined;
+    }
+    if (videoProcessingIntervalIdRef.current) {
+      clearInterval(videoProcessingIntervalIdRef.current);
+      videoProcessingIntervalIdRef.current = undefined;
+    }
+  }, []);
+
+  // コンポーネントのアンマウント時にクリーンアップ
+  useEffect(() => {
+    return cleanup;
+  }, [cleanup]);
 
   return (
     <div className="flex flex-col items-center w-full max-w-4xl mx-auto p-4">
