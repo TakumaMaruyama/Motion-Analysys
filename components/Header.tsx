@@ -9,7 +9,7 @@ const Header: React.FC = () => {
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
             <a href="/" className="flex items-center space-x-2">
-              <span className="text-[#333333] dark:text-[#ffffff] text-xl font-bold">モーションビジョン</span>
+              <span className="text-[#333333] dark:text-[#ffffff] text-xl font-bold">Motion Analysys</span>
             </a>
           </div>
         </div>
