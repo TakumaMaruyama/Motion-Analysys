@@ -18,6 +18,23 @@ interface MediaRecorderOptions {
   bitsPerSecond?: number;
 }
 
+// ランドマークデータの型定義
+interface LandmarkData {
+  frame: number;
+  timestamp: number;
+  position: {
+    x: number;
+    y: number;
+  };
+  landmarks?: {
+    name: string;
+    x: number;
+    y: number;
+    z?: number;
+    visibility?: number;
+  }[];
+}
+
 // 動作分析結果の型定義
 interface MotionAnalysisResult {
   sessionId: string;

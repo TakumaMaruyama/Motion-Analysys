@@ -1,5 +1,5 @@
 import React from 'react';
-import { MotionAnalyzer } from '../components/motion-analyzer';
+import SimpleMotionAnalyzer from '@/components/simple-motion-analyzer';
 
 const Page: React.FC = () => {
   return (
@@ -8,7 +8,7 @@ const Page: React.FC = () => {
         <h1 className="text-4xl font-bold mb-8 text-center text-[#2c3e50] dark:text-white">
           全身動作分析
         </h1>
-        <MotionAnalyzer />
+        <SimpleMotionAnalyzer />
       </div>
     </div>
   );
