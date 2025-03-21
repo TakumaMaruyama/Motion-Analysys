@@ -59,6 +59,15 @@ const DEFAULT_CONFIG: VideoProcessingConfig = {
   }
 };
 
+// Camera オプションの型定義を拡張
+interface CameraOptions {
+  onFrame?: () => Promise<void>;
+  width?: number;
+  height?: number;
+  facingMode?: string;
+  frameRate?: number;
+}
+
 /**
  * 強化版モーション解析コンポーネント
  * WebWorkerを使用した並列処理とWebCodecs APIによる高品質動画生成を実装
@@ -159,19 +168,26 @@ export default function EnhancedMotionAnalyzer() {
         
         // カメラとの接続を設定
         if (holisticRef.current && !cameraRef.current) {
-          cameraRef.current = new Camera(videoRef.current, {
-            onFrame: async () => {
-              if (holisticRef.current && videoRef.current) {
-                await holisticRef.current.send({ image: videoRef.current });
-              }
-            },
-            width: videoRef.current.videoWidth,
-            height: videoRef.current.videoHeight,
-            frameRate: config.input.frameRate
-          });
-          
-          // カメラ開始
-          await cameraRef.current.start();
+          const videoElement = videoRef.current;
+          if (videoElement) {
+            // フレームレートを直接videoElementに設定
+            videoElement.defaultPlaybackRate = config.input.frameRate / 30; // 30fpsを基準に調整
+            
+            const cameraOptions: CameraOptions = {
+              onFrame: async () => {
+                if (holisticRef.current && videoRef.current) {
+                  await holisticRef.current.send({ image: videoRef.current });
+                }
+              },
+              width: videoElement.videoWidth,
+              height: videoElement.videoHeight
+            };
+            
+            cameraRef.current = new Camera(videoElement, cameraOptions);
+            
+            // カメラ開始
+            await cameraRef.current.start();
+          }
         }
         
         setProcessing(prev => ({
