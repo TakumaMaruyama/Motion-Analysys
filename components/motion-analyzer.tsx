@@ -290,6 +290,8 @@ export function MotionAnalyzer() {
   const [isCreatingVideo, setIsCreatingVideo] = useState(false);
   const [holisticLoaded, setHolisticLoaded] = useState(false);
   const [detectionRate, setDetectionRate] = useState(0);
+  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<string>('');
   
   const [waitingForStart, setWaitingForStart] = useState(false);
   const [mediaLibraryStatus, setMediaLibraryStatus] = useState('未初期化');
@@ -306,6 +308,7 @@ export function MotionAnalyzer() {
   const recordedChunksRef = useRef<Blob[]>([]);
   const holisticRef = useRef<Holistic | null>(null);
   const detectedFramesRef = useRef(0);
+  const cameraRef = useRef<Camera | null>(null);
   
   // 初期化時にセッションIDを生成
   useEffect(() => {
@@ -535,6 +538,17 @@ export function MotionAnalyzer() {
       if (holisticRef.current) {
         await holisticRef.current.close();
       }
+
+      // カメラストリームを停止
+      if (cameraRef.current) {
+        await cameraRef.current.stop();
+      }
+
+      // ビデオ要素のストリームを停止
+      if (videoRef.current && videoRef.current.srcObject instanceof MediaStream) {
+        videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+        videoRef.current.srcObject = null;
+      }
       
       // 指定バージョンの配列 - CDNの問題を回避するために複数のソースを試行する
       const versionSources = [
@@ -727,7 +741,7 @@ export function MotionAnalyzer() {
             a.click();
             
             // クリーンアップ
-            URL.revokeObjectURL(videoURL);
+            URL.revokeObjectURL(url);
             
             console.log('動画生成完了');
             setProgress('処理完了しました');
@@ -863,7 +877,7 @@ export function MotionAnalyzer() {
       // メディアレコーダーオプションの設定
       const recorderOptions: MediaRecorderOptions = {
         mimeType: selectedMimeType,
-        videoBitsPerSecond: 5000000 // 5Mbps (適切な設定)
+        videoBitsPerSecond: 2500000 // 2.5Mbps
       };
       
       // キャンバスからメディアストリームを取得（高フレームレート）
@@ -873,35 +887,54 @@ export function MotionAnalyzer() {
       const mediaRecorder = new MediaRecorder(stream, recorderOptions);
       const chunks: Blob[] = [];
       
+      // データ取得イベントハンドラ
       mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
+        if (e.data && e.data.size > 0) {
           chunks.push(e.data);
         }
       };
       
       // 録画終了時の処理
       mediaRecorder.onstop = () => {
+        if (chunks.length === 0) {
+          console.error('録画データがありません');
+          setError('録画データの取得に失敗しました');
+          setIsCreatingVideo(false);
+          return;
+        }
+        
         // 録画データを結合
-        const videoBlob = new Blob(chunks, { type: 'video/webm' });
+        const videoBlob = new Blob(chunks, { type: mediaRecorder.mimeType || 'video/webm' });
         console.log(`生成された動画サイズ: ${(videoBlob.size / (1024 * 1024)).toFixed(2)} MB`);
+        
+        if (videoBlob.size === 0) {
+          console.error('生成された動画のサイズが0です');
+          setError('動画の生成に失敗しました');
+          setIsCreatingVideo(false);
+          return;
+        }
         
         // 動画URLを作成
         const url = URL.createObjectURL(videoBlob);
-        setProcessingUrl(url);
         setProcessedVideoUrl(url);
+        setProcessingUrl(url);
         
-        // ダウンロードリンク作成
+        // ダウンロードリンク
         const a = document.createElement('a');
         a.href = url;
         a.download = `${sessionId}_processed_video.webm`;
         a.click();
         
-        setProgress('動画の生成が完了しました！');
+        // クリーンアップ
+        URL.revokeObjectURL(url);
+        
+        console.log('動画生成完了');
+        setProgress('処理完了しました');
         setIsCreatingVideo(false);
       };
       
-      // 録画開始
-      mediaRecorder.start();
+      // 録画開始（250msごとにデータを取得）
+      mediaRecorder.start(250);
       
       // フレーム描画用変数
       let frameIndex = 0;
@@ -1606,6 +1639,29 @@ export function MotionAnalyzer() {
   // 録画を停止
   const stopRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      // 録画停止前に自動ダウンロードフラグを設定
+      const originalOnStop = mediaRecorderRef.current.onstop;
+      
+      mediaRecorderRef.current.onstop = (event) => {
+        // オリジナルのハンドラを呼び出し
+        if (originalOnStop) {
+          originalOnStop.call(mediaRecorderRef.current!, event);
+        }
+        
+        // 自動ダウンロード
+        setTimeout(() => {
+          if (processedVideoUrl) {
+            const a = document.createElement('a');
+            a.href = processedVideoUrl;
+            a.download = `${sessionId}_processed_video.webm`;
+            a.click();
+            
+            // 処理完了メッセージ
+            setProgress('録画が完了し、動画が自動的にダウンロードされました');
+          }
+        }, 1000); // 1秒待ってからダウンロードを開始
+      };
+      
       mediaRecorderRef.current.stop();
       setVideoRecorderStatus('inactive');
     }
@@ -1618,8 +1674,20 @@ export function MotionAnalyzer() {
       stopRecording();
       setIsCapturing(false);
       
-      if (videoRef.current && videoRef.current.src) {
-        URL.revokeObjectURL(videoRef.current.src);
+      // カメラストリームを停止
+      if (cameraRef.current) {
+        cameraRef.current.stop();
+      }
+
+      // ビデオ要素のストリームを停止
+      if (videoRef.current) {
+        if (videoRef.current.srcObject instanceof MediaStream) {
+          videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+          videoRef.current.srcObject = null;
+        }
+        if (videoRef.current.src) {
+          URL.revokeObjectURL(videoRef.current.src);
+        }
       }
       
       // 動画URLのクリーンアップ
@@ -1663,6 +1731,89 @@ export function MotionAnalyzer() {
     }
   }, []);
 
+  // カメラデバイスを取得する関数
+  const getAvailableCameras = async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(device => device.kind === 'videoinput');
+      setAvailableCameras(videoDevices);
+      
+      // デフォルトのカメラを選択
+      if (videoDevices.length > 0 && !selectedCameraId) {
+        setSelectedCameraId(videoDevices[0].deviceId);
+      }
+      
+      console.log('利用可能なカメラ:', videoDevices);
+    } catch (err) {
+      console.error('カメラデバイスの取得エラー:', err);
+      setError('カメラデバイスの取得に失敗しました');
+    }
+  };
+
+  // カメラを切り替える関数
+  const switchCamera = async (deviceId: string) => {
+    try {
+      if (!holisticRef.current) {
+        throw new Error('MediaPipe Holisticが初期化されていません');
+      }
+
+      // 既存のカメラストリームを停止
+      if (cameraRef.current) {
+        await cameraRef.current.stop();
+      }
+
+      // MediaStreamを取得
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          deviceId: { exact: deviceId },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }
+      });
+
+      // ビデオ要素にストリームを設定
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+
+      // 新しいカメラを設定
+      const camera = new Camera(videoRef.current!, {
+        onFrame: async () => {
+          if (holisticRef.current && videoRef.current) {
+            await holisticRef.current.send({image: videoRef.current});
+          }
+        },
+        width: 1280,
+        height: 720
+      });
+
+      // カメラを開始
+      await camera.start();
+      cameraRef.current = camera;
+      setSelectedCameraId(deviceId);
+      console.log('カメラを切り替えました:', deviceId);
+    } catch (err) {
+      console.error('カメラ切り替えエラー:', err);
+      setError('カメラの切り替えに失敗しました');
+    }
+  };
+
+  // コンポーネントマウント時にカメラデバイスを取得
+  useEffect(() => {
+    const fetchCameras = async () => {
+      await getAvailableCameras();
+    };
+    
+    fetchCameras();
+    
+    // デバイス変更イベントのリスナーを設定
+    navigator.mediaDevices.addEventListener('devicechange', fetchCameras);
+    
+    return () => {
+      navigator.mediaDevices.removeEventListener('devicechange', fetchCameras);
+    };
+  }, []);
+
   return (
     <Card>
       <CardContent className="p-6">
@@ -1676,6 +1827,27 @@ export function MotionAnalyzer() {
                 onChange={handleFileChange}
                 ref={fileInputRef}
               />
+              
+              {/* カメラ選択UI */}
+              {availableCameras.length > 1 && (
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    カメラを選択
+                  </label>
+                  <select
+                    value={selectedCameraId}
+                    onChange={(e) => switchCamera(e.target.value)}
+                    className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    {availableCameras.map((camera) => (
+                      <option key={camera.deviceId} value={camera.deviceId}>
+                        {camera.label || `カメラ ${camera.deviceId.slice(0, 8)}...`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              
               <Button
                 onClick={() => fileInputRef.current?.click()}
                 className="w-full h-32 text-lg"
