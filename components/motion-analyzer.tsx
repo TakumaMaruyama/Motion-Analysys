@@ -397,13 +397,18 @@ export function MotionAnalyzer() {
       
       // モーショントラッキングデータを追加
       const newTrackingData: LandmarkData = {
-        frame: currentFrameRef.current,
+        pose: results.poseLandmarks || [],
+        faceMesh: results.faceLandmarks || [],
+        leftHand: results.leftHandLandmarks || [],
+        rightHand: results.rightHandLandmarks || [],
         timestamp: videoRef.current?.currentTime || 0,
-        position: {
-          x: Math.floor(canvasRef.current.width / 2),
-          y: Math.floor(canvasRef.current.height / 2)
-        },
-        landmarks: landmarks
+        frameIndex: currentFrameRef.current,
+        confidence: {
+          pose: results.poseWorldLandmarks ? 1.0 : 0.0,
+          face: results.faceLandmarks ? 1.0 : 0.0,
+          leftHand: results.leftHandLandmarks ? 1.0 : 0.0,
+          rightHand: results.rightHandLandmarks ? 1.0 : 0.0
+        }
       };
       
       tempMotionDataRef.current.push(newTrackingData);
@@ -476,6 +481,7 @@ export function MotionAnalyzer() {
     
     // 処理済みフレームを保存
     try {
+      const startTime = performance.now();
       const imageData = ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
       const timestamp = videoRef.current?.currentTime || 0;
       
@@ -483,7 +489,14 @@ export function MotionAnalyzer() {
       if (processedFramesRef.current.length < 10000) {
         processedFramesRef.current.push({
           imageData,
-          timestamp
+          timestamp,
+          sourceTime: timestamp,
+          index: processedFramesRef.current.length,
+          metadata: {
+            processingTime: performance.now() - startTime,
+            captureTime: performance.now(),
+            quality: 1.0
+          }
         });
         
         // フレーム数をコンソールに出力（デバッグ用）
@@ -1411,7 +1424,12 @@ export function MotionAnalyzer() {
           }
         },
         motion_tracking: tempMotionDataRef.current,
-        landmarks_count: tempMotionDataRef.current.length > 0 ? tempMotionDataRef.current[0].landmarks?.length || 0 : 0,
+        landmarks_count: tempMotionDataRef.current.length > 0 
+          ? (tempMotionDataRef.current[0].pose?.length || 0) +
+            (tempMotionDataRef.current[0].faceMesh?.length || 0) +
+            (tempMotionDataRef.current[0].leftHand?.length || 0) +
+            (tempMotionDataRef.current[0].rightHand?.length || 0)
+          : 0,
         landmark_types: [
           "頭部", "左肩", "右肩", "左肘", "右肘", "左手首", "右手首",
           "左腰", "右腰", "左膝", "右膝", "左足首", "右足首"
