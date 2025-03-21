@@ -828,16 +828,17 @@ export function MotionAnalyzer() {
       }
       
       // 最高品質のMediaRecorder設定を試行
-      let selectedMimeType = '';
-      const mimeTypes = [
+      const supportedMimeTypes = [
+        'video/mp4;codecs=h264',
+        'video/mp4',
         'video/webm;codecs=vp9',
         'video/webm;codecs=h264',
-        'video/mp4;codecs=h264',
         'video/webm'
       ];
       
       // サポートされているMIMEタイプを探す
-      for (const mt of mimeTypes) {
+      let selectedMimeType = '';
+      for (const mt of supportedMimeTypes) {
         if (MediaRecorder.isTypeSupported(mt)) {
           selectedMimeType = mt;
           console.log(`サポートされているMIMEタイプ: ${mt}`);
@@ -867,19 +868,20 @@ export function MotionAnalyzer() {
       // 録画終了時の処理
       mediaRecorder.onstop = () => {
         // 録画データを結合
-        const videoBlob = new Blob(chunks, { type: 'video/webm' });
+        const videoBlob = new Blob(chunks, { type: 'video/mp4' });
         console.log(`生成された動画サイズ: ${(videoBlob.size / (1024 * 1024)).toFixed(2)} MB`);
         
-        // 動画URLを作成
+        // 動画URLを生成
         const url = URL.createObjectURL(videoBlob);
         setProcessingUrl(url);
-        setProcessedVideoUrl(url);
         
-        // ダウンロードリンク作成
+        // ダウンロードリンクを自動作成
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${sessionId}_processed_video.webm`;
+        a.download = `${sessionId}_processed_video.mp4`;
+        document.body.appendChild(a);
         a.click();
+        document.body.removeChild(a);
         
         setProgress('動画の生成が完了しました！');
         setIsCreatingVideo(false);
@@ -937,13 +939,16 @@ export function MotionAnalyzer() {
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    // 動画ファイルの種類チェックを改善（MOV形式にも対応）
-    if (!file.type.startsWith('video/') && 
-        !file.name.toLowerCase().endsWith('.mov') && 
+    
+    // ファイル形式の検証
+    const validFormats = ['video/mp4', 'video/quicktime', 'video/webm'];
+    
+    // 拡張子チェック（サイズも考慮）
+    if (!validFormats.includes(file.type) && 
         !file.name.toLowerCase().endsWith('.mp4') && 
+        !file.name.toLowerCase().endsWith('.mov') && 
         !file.name.toLowerCase().endsWith('.webm')) {
-      setError('動画ファイルを選択してください');
+      setError('対応していないファイル形式です。MP4、MOV、またはWebM形式のファイルを選択してください。');
       return;
     }
     
@@ -1442,26 +1447,23 @@ export function MotionAnalyzer() {
       
       // ダウンロードリンクを作成
       const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${sessionId}_analysis.json`;
       
-      // リンクをクリックしてダウンロードを開始
-      document.body.appendChild(link);
-      link.click();
+      // ダウンロードを実行
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${sessionId}_motion_data.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
       
       // クリーンアップ
-      document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      
-      setProgress('分析データのエクスポートが完了しました');
       setIsExportingData(false);
-      return true;
-    } catch (err) {
-      console.error('Error exporting analysis data:', err);
-      setError(`分析データのエクスポートに失敗しました: ${err instanceof Error ? err.message : String(err)}`);
+      setProgress('');
+    } catch (error) {
+      console.error('データのエクスポートに失敗しました:', error);
+      setProgress('エクスポートに失敗しました');
       setIsExportingData(false);
-      return false;
     }
   };
   
@@ -1649,6 +1651,32 @@ export function MotionAnalyzer() {
     }
   }, []);
 
+  // ダウンロードボタンクリック時
+  const handleDownloadProcessed = () => {
+    if (!processingUrl) return;
+    
+    const a = document.createElement('a');
+    a.href = processingUrl;
+    a.download = `${sessionId}_processed_video.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  // オリジナル動画をダウンロード
+  const handleDownloadOriginal = () => {
+    if (!originalVideoFile) return;
+    
+    const url = URL.createObjectURL(originalVideoFile);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${sessionId}_original_video.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <Card>
       <CardContent className="p-6">
@@ -1759,7 +1787,7 @@ export function MotionAnalyzer() {
                   onClick={() => {
                     const a = document.createElement('a');
                     a.href = processedVideoUrl;
-                    a.download = `${sessionId}_processed_video.webm`;
+                    a.download = `${sessionId}_processed_video.mp4`;
                     a.click();
                   }}
                   variant="secondary"
@@ -1799,7 +1827,7 @@ export function MotionAnalyzer() {
                       onClick={() => {
                         const a = document.createElement('a');
                         a.href = processedVideoUrl;
-                        a.download = `${sessionId}_processed_video.webm`;
+                        a.download = `${sessionId}_processed_video.mp4`;
                         a.click();
                       }}
                       size="sm"

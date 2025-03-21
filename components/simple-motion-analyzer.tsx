@@ -99,6 +99,35 @@ const SimpleMotionAnalyzer: React.FC = () => {
   const analysisTimerIdRef = useRef<NodeJS.Timeout>();
   const videoProcessingIntervalIdRef = useRef<NodeJS.Timeout>();
 
+  // モバイルデバイス検出
+  const isMobile = typeof navigator !== 'undefined' && 
+    (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
+    (navigator.maxTouchPoints && navigator.maxTouchPoints > 2));
+
+  // MediaRecorder関連の定数
+  const getMimeTypes = () => [
+    'video/mp4;codecs=h264',
+    'video/mp4',
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=h264',
+    'video/webm'
+  ];
+
+  // 常にMP4形式として保存
+  const extension = 'mp4';
+
+  // カメラの切り替え機能
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  
+  const toggleCamera = useCallback(() => {
+    if (videoStream) {
+      // 現在のストリームを停止
+      videoStream.getTracks().forEach(track => track.stop());
+      setVideoStream(null);
+    }
+    setFacingMode(prevMode => prevMode === 'user' ? 'environment' : 'user');
+  }, [videoStream]);
+
   // Holisticの初期化
   const initHolistic = useCallback(async () => {
     try {
@@ -230,105 +259,43 @@ const SimpleMotionAnalyzer: React.FC = () => {
     }
   }, [analysisMode]);
 
-  // カメラの初期化
+  // カメラを初期化
   const initCamera = useCallback(async () => {
     try {
-      setIsLoading(true);
-      console.log('カメラ初期化開始');
-      
-      // 既存のリソースをクリーンアップ
-      if (cameraRef.current) {
-        cameraRef.current.stop();
-        cameraRef.current = null;
-      }
-      
       if (videoStream) {
+        // 既存のストリームがあれば停止
         videoStream.getTracks().forEach(track => track.stop());
       }
-      
-      // ユーザーのカメラにアクセス
-      const constraints: MediaStreamConstraints = {
+
+      // カメラの設定
+      const constraints = {
         video: {
+          facingMode: facingMode,
           width: { ideal: 1280 },
           height: { ideal: 720 },
-          frameRate: { ideal: 30 }
-        },
-        audio: false
+          frameRate: { ideal: 30, min: 15 }
+        }
       };
-      
-      console.log('カメラアクセス要求');
+
+      // カメラストリームを取得
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       setVideoStream(stream);
-      
-      // フレームレートを取得
-      const videoTrack = stream.getVideoTracks()[0];
-      const settings = videoTrack.getSettings();
-      const actualFrameRate = settings.frameRate || 30;
-      setOriginalFrameRate(actualFrameRate);
-      console.log('取得したフレームレート:', actualFrameRate);
-      
+
+      // ビデオ要素にストリームを設定
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        console.log('ビデオに接続、再生開始');
         await videoRef.current.play();
-        
-        // キャンバスのサイズを設定
-        if (canvasRef.current) {
-          canvasRef.current.width = videoRef.current.videoWidth;
-          canvasRef.current.height = videoRef.current.videoHeight;
-          console.log('キャンバスサイズ設定:', canvasRef.current.width, 'x', canvasRef.current.height);
-        }
-        
-        // まずHolisticを初期化
-        console.log('カメラ接続後、Holisticを初期化');
-        const success = await initHolistic();
-        
-        if (!success) {
-          throw new Error("Holistic初期化に失敗");
-        }
-        
-        // Holisticの準備ができてから、カメラを接続
-        if (holisticRef.current) {
-          console.log('Camera-Holistic接続を設定');
-          cameraRef.current = new Camera(videoRef.current, {
-            onFrame: async () => {
-              if (holisticRef.current && videoRef.current) {
-                try {
-                  await holisticRef.current.send({ image: videoRef.current });
-                } catch (e) {
-                  console.error("Holistic処理エラー:", e);
-                }
-              }
-            },
-            width: videoRef.current.videoWidth,
-            height: videoRef.current.videoHeight
-          });
-          
-          console.log('カメラ開始');
-          await cameraRef.current.start();
-          console.log('カメラ開始完了');
-        }
       }
-      
+
+      // カメラ使用中のフラグを設定
+      setIsInitialized(true);
       setIsLoading(false);
-    } catch (error) {
-      console.error('カメラの初期化に失敗しました:', error);
+    } catch (err) {
+      console.error('カメラの初期化に失敗:', err);
       setIsLoading(false);
-      
-      // エラー時に既存のリソースをクリーンアップ
-      if (holisticRef.current) {
-        holisticRef.current.close();
-        holisticRef.current = null;
-      }
-      
-      if (cameraRef.current) {
-        cameraRef.current.stop();
-        cameraRef.current = null;
-      }
-      
       setIsInitialized(false);
     }
-  }, [initHolistic, videoStream]);
+  }, [videoStream, facingMode]);
 
   // 動画ダウンロード関数を先に定義
   const downloadVideo = useCallback(() => {
@@ -340,8 +307,6 @@ const SimpleMotionAnalyzer: React.FC = () => {
     console.log('ダウンロード処理開始');
     
     // 常にWebM形式として保存
-    const extension = 'webm';
-    
     const a = document.createElement('a');
     a.href = outputVideoUrl;
     a.download = `motion-analysis-${new Date().toISOString()}.${extension}`;
@@ -424,11 +389,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
       
       // コーデックの対応確認
       let options = {};
-      const supportedTypes = [
-        'video/webm;codecs=vp9',
-        'video/webm;codecs=vp8',
-        'video/webm'
-      ];
+      const supportedTypes = getMimeTypes();
       
       for (const type of supportedTypes) {
         if (MediaRecorder.isTypeSupported(type)) {
@@ -1043,8 +1004,8 @@ const SimpleMotionAnalyzer: React.FC = () => {
       if (isRecording) {
         stopRecording();
       }
-      if (cameraRef.current) {
-        cameraRef.current.stop();
+      if (videoStream) {
+        videoStream.getTracks().forEach(track => track.stop());
       }
     } else if (analysisMode === 'video') {
       if (isVideoAnalyzing) {
@@ -1104,11 +1065,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
       
       // コーデックの対応確認
       let options = {};
-      const supportedTypes = [
-        'video/webm;codecs=vp9',
-        'video/webm;codecs=vp8',
-        'video/webm'
-      ];
+      const supportedTypes = getMimeTypes();
       
       for (const type of supportedTypes) {
         if (MediaRecorder.isTypeSupported(type)) {
@@ -1359,22 +1316,30 @@ const SimpleMotionAnalyzer: React.FC = () => {
       
       {/* カメラモード */}
       {analysisMode === 'camera' && (
-        <div className="flex flex-col items-center w-full">
-          <div className="relative w-full aspect-video bg-black mb-4">
+        <div className="w-full flex flex-col items-center">
+          <div className="relative w-full max-w-2xl mb-4">
             <video
               ref={videoRef}
-              className="absolute inset-0 w-full h-full object-contain opacity-0"
+              className="w-full h-auto border rounded"
               playsInline
               muted
             />
             <canvas
               ref={canvasRef}
-              className="absolute inset-0 w-full h-full object-contain"
+              className="absolute top-0 left-0 w-full h-full pointer-events-none"
             />
-            {isLoading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white">
-                読み込み中...
-              </div>
+            
+            {/* カメラ切り替えボタン */}
+            {isMobile && (
+              <button
+                onClick={toggleCamera}
+                className="absolute bottom-4 right-4 bg-blue-500 text-white rounded-full p-3 shadow-lg z-10"
+                title="カメラ切り替え"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
             )}
           </div>
           
