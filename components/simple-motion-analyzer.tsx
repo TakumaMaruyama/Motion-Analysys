@@ -262,6 +262,9 @@ const SimpleMotionAnalyzer: React.FC = () => {
   // カメラを初期化
   const initCamera = useCallback(async () => {
     try {
+      setIsLoading(true);
+      console.log('カメラ初期化開始');
+      
       if (videoStream) {
         // 既存のストリームがあれば停止
         videoStream.getTracks().forEach(track => track.stop());
@@ -279,23 +282,65 @@ const SimpleMotionAnalyzer: React.FC = () => {
 
       // カメラストリームを取得
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      console.log('カメラストリーム取得成功:', stream.getVideoTracks()[0].label);
       setVideoStream(stream);
 
       // ビデオ要素にストリームを設定
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
+        
+        // キャンバスのサイズをビデオに合わせる
+        if (canvasRef.current) {
+          canvasRef.current.width = videoRef.current.videoWidth;
+          canvasRef.current.height = videoRef.current.videoHeight;
+          console.log(`キャンバスサイズ設定: ${canvasRef.current.width}x${canvasRef.current.height}`);
+        }
+      }
+
+      // Holisticを初期化（まだ初期化されていない場合）
+      if (!holisticRef.current) {
+        const success = await initHolistic();
+        if (!success) {
+          throw new Error('Holistic初期化に失敗しました');
+        }
+      }
+      
+      // カメラユーティリティの設定
+      if (videoRef.current && holisticRef.current) {
+        if (cameraRef.current) {
+          cameraRef.current.stop();
+        }
+        
+        cameraRef.current = new Camera(videoRef.current, {
+          onFrame: async () => {
+            if (videoRef.current && holisticRef.current) {
+              try {
+                await holisticRef.current.send({image: videoRef.current});
+              } catch (err) {
+                console.warn('フレーム処理エラー:', err);
+              }
+            }
+          },
+          width: 1280,
+          height: 720
+        });
+        
+        console.log('カメラユーティリティ設定完了');
+        await cameraRef.current.start();
+        console.log('カメラ開始完了');
       }
 
       // カメラ使用中のフラグを設定
       setIsInitialized(true);
       setIsLoading(false);
+      console.log('カメラ初期化完了');
     } catch (err) {
       console.error('カメラの初期化に失敗:', err);
       setIsLoading(false);
       setIsInitialized(false);
     }
-  }, [videoStream, facingMode]);
+  }, [videoStream, facingMode, initHolistic]);
 
   // 動画ダウンロード関数を先に定義
   const downloadVideo = useCallback(() => {
@@ -359,6 +404,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
   const startRecording = useCallback(() => {
     if (!canvasRef.current) {
       console.error('キャンバスが見つかりません');
+      alert('キャンバスが見つかりません。カメラを接続してください。');
       return;
     }
     
@@ -374,32 +420,46 @@ const SimpleMotionAnalyzer: React.FC = () => {
     startTimeRef.current = 0;
     
     try {
-      // ストリームの取得（モードによって処理を分ける）
+      // ブラウザがMediaRecorderをサポートしているか確認
+      if (!window.MediaRecorder) {
+        throw new Error('MediaRecorderがサポートされていません。');
+      }
+      
+      // ストリームの取得
       console.log('キャンバスからストリーム取得 フレームレート:', originalFrameRate);
       
       // キャンバスからストリームを取得する
-      const stream = canvasRef.current.captureStream(originalFrameRate);
+      const stream = canvasRef.current.captureStream(originalFrameRate || 30);
       
       if (!stream || stream.getVideoTracks().length === 0) {
-        console.error('ストリームまたはビデオトラックの取得に失敗');
-        return;
+        throw new Error('ストリームまたはビデオトラックの取得に失敗しました。');
       }
       
-      console.log(`取得したストリーム: トラック数=${stream.getTracks().length}`);
+      console.log(`取得したストリーム: トラック数=${stream.getTracks().length}, トラック詳細:`, stream.getVideoTracks()[0].getSettings());
       
       // コーデックの対応確認
       let options = {};
       const supportedTypes = getMimeTypes();
+      let selectedType = '';
       
       for (const type of supportedTypes) {
-        if (MediaRecorder.isTypeSupported(type)) {
-          options = {
-            mimeType: type,
-            videoBitsPerSecond: 5000000
-          };
-          console.log(`${type}コーデック利用`);
-          break;
+        try {
+          if (MediaRecorder.isTypeSupported(type)) {
+            options = {
+              mimeType: type,
+              videoBitsPerSecond: 2500000 // ビットレートを下げて安定性を向上
+            };
+            selectedType = type;
+            console.log(`${type}コーデック利用`);
+            break;
+          }
+        } catch (e) {
+          console.warn(`${type}の検証中にエラー:`, e);
         }
+      }
+      
+      if (!selectedType) {
+        console.warn('対応するMIMEタイプが見つかりませんでした。デフォルト設定を使用します。');
       }
       
       // MediaRecorderインスタンスの作成
@@ -418,40 +478,44 @@ const SimpleMotionAnalyzer: React.FC = () => {
         }
       };
       
+      // エラーハンドリング
+      mediaRecorder.onerror = (event) => {
+        console.error('MediaRecorderエラー:', event);
+        alert(`録画中にエラーが発生しました: ${event.type}`);
+      };
+      
       // 録画停止イベントハンドラ
       mediaRecorder.onstop = () => {
         console.log(`録画終了、録画チャンク数: ${chunks.length}`);
         
         if (chunks.length === 0) {
           console.error('録画データがありません');
+          alert('録画データを取得できませんでした。');
           return;
         }
         
-        // Blobの作成
-        const mimeType = mediaRecorder.mimeType || 'video/webm';
-        const extension = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
-        const blob = new Blob(chunks, { type: mimeType });
-        const url = URL.createObjectURL(blob);
-        
-        console.log(`最終Blobサイズ: ${blob.size} バイト、タイプ: ${blob.type}`);
-        
-        if (blob.size > 0) {
-          const url = URL.createObjectURL(blob);
-          console.log('Blob URL作成:', url);
-          setOutputVideoUrl(url);
+        try {
+          // Blobの作成
+          const mimeType = mediaRecorder.mimeType || 'video/webm';
+          const extension = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
+          const blob = new Blob(chunks, { type: mimeType });
           
-          // 自動ダウンロード
-          setTimeout(() => {
-            downloadVideo();
-          }, 500);
-        } else {
-          console.error('Blobのサイズが0です');
+          console.log(`最終Blobサイズ: ${blob.size} バイト、タイプ: ${blob.type}`);
+          
+          if (blob.size > 0) {
+            const url = URL.createObjectURL(blob);
+            console.log('Blob URL作成:', url);
+            setOutputVideoUrl(url);
+            
+            // 録画終了を通知
+            alert('録画が完了しました！');
+          } else {
+            throw new Error('Blobのサイズが0です');
+          }
+        } catch (err) {
+          console.error('録画データの処理中にエラー:', err);
+          alert(`録画データの処理中にエラーが発生しました: ${err}`);
         }
-      };
-      
-      // エラーハンドリング
-      mediaRecorder.onerror = (event) => {
-        console.error('MediaRecorderエラー:', event);
       };
       
       // 録画開始
@@ -459,8 +523,13 @@ const SimpleMotionAnalyzer: React.FC = () => {
       mediaRecorder.start(1000); // 1秒ごとにデータを取得
       console.log('録画開始: ', mediaRecorder.mimeType);
       setIsRecording(true);
+      
+      // 録画開始を通知
+      alert('録画を開始しました。「録画停止」ボタンを押すと録画を終了します。');
+      
     } catch (error) {
       console.error('録画の開始に失敗しました:', error);
+      alert(`録画の開始に失敗しました: ${error instanceof Error ? error.message : '不明なエラー'}`);
     }
   }, [isRecording, originalFrameRate]);
 
@@ -1187,10 +1256,11 @@ const SimpleMotionAnalyzer: React.FC = () => {
       
       // 動画の再生位置を先頭に戻す
       uploadedVideoRef.current.currentTime = 0;
+      uploadedVideoRef.current.playbackRate = 0.5; // 再生速度を遅くして処理をしやすくする
       
       // 録画設定
       const canvas = canvasRef.current;
-      const stream = canvas.captureStream(30); // 30fpsで録画
+      const stream = canvas.captureStream(15); // フレームレートを15fpsに下げてコマ落ちを減らす
       
       // MediaRecorderのオプション設定
       const supportedTypes = [
@@ -1208,7 +1278,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
         if (MediaRecorder.isTypeSupported(type)) {
           options = {
             mimeType: type,
-            videoBitsPerSecond: 5000000
+            videoBitsPerSecond: 2500000 // ビットレートを下げて安定性向上
           };
           console.log(`使用するコーデック: ${type}`);
           break;
@@ -1218,14 +1288,13 @@ const SimpleMotionAnalyzer: React.FC = () => {
       // MediaRecorderインスタンスの作成
       console.log('MediaRecorder作成', options);
       const mediaRecorder = new MediaRecorder(stream, options);
-      
-      // データ収集用の配列
       const chunks: Blob[] = [];
       
       // データが利用可能になったら収集
       mediaRecorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) {
           chunks.push(e.data);
+          console.log(`データチャンク取得: ${e.data.size} バイト`);
         }
       };
       
@@ -1237,6 +1306,8 @@ const SimpleMotionAnalyzer: React.FC = () => {
         const blob = new Blob(chunks, { type: mimeType });
         const url = URL.createObjectURL(blob);
         
+        console.log(`生成された動画の情報: サイズ=${(blob.size/1024/1024).toFixed(2)}MB, 形式=${mimeType}`);
+        
         // ダウンロードリンクを生成して自動的にクリック
         const a = document.createElement('a');
         a.href = url;
@@ -1245,53 +1316,40 @@ const SimpleMotionAnalyzer: React.FC = () => {
         a.click();
         document.body.removeChild(a);
         
+        // 元の再生速度に戻す
+        if (uploadedVideoRef.current) {
+          uploadedVideoRef.current.playbackRate = 1.0;
+        }
+        
         alert('録画が完了し、動画がダウンロードされました！');
       };
       
-      // 動画を再生
-      const videoElement = uploadedVideoRef.current;
-      videoElement.play();
+      // 録画開始
+      mediaRecorder.start(500); // 500msごとにデータを取得してチャンクサイズを小さくする
       
-      // ランドマークの処理と描画を開始
-      const ctx = canvas.getContext('2d');
-      const processFrame = async () => {
-        try {
-          if (!videoElement.paused && !videoElement.ended) {
-            // フレームをキャンバスに描画
-            ctx?.clearRect(0, 0, canvas.width, canvas.height);
-            ctx?.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-            
-            // MediaPipeで解析
-            if (holisticRef.current) {
-              await holisticRef.current.send({ image: canvas });
-            }
-            
-            // 次のフレームを処理
-            requestAnimationFrame(processFrame);
-          } else if (videoElement.ended) {
-            // 動画が終了したら録画を停止
-            if (mediaRecorder.state !== 'inactive') {
-              mediaRecorder.stop();
-            }
+      // 動画の再生を開始して録画する
+      uploadedVideoRef.current.play().then(() => {
+        console.log('動画の再生を開始しました');
+        
+        // 動画の長さが分かったら、その時間後に録画を自動的に停止する
+        const duration = uploadedVideoRef.current!.duration;
+        console.log(`動画の長さ: ${duration}秒`);
+        
+        setTimeout(() => {
+          if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            console.log('録画を自動停止');
+            mediaRecorder.stop();
           }
-        } catch (e) {
-          console.error('フレーム処理エラー:', e);
-          requestAnimationFrame(processFrame);
-        }
-      };
+        }, duration * 1000 * (1 / 0.5) + 1000); // 再生速度を考慮した停止時間 + 余裕
+      }).catch(err => {
+        console.error('動画の再生開始に失敗:', err);
+        alert('動画の再生に失敗しました');
+      });
       
-      // 録画を開始
-      mediaRecorder.start(100); // 100msごとにデータを収集
-      
-      // フレーム処理を開始
-      processFrame();
-      
-      // ユーザーに録画開始を通知
-      alert('ランドマーク付き動画の録画を開始します。動画が終了すると自動的にダウンロードされます。');
-      
+      alert('録画を開始しました。動画が終わるまでお待ちください...');
     } catch (error) {
       console.error('録画の開始に失敗しました:', error);
-      alert('録画の開始に失敗しました。ブラウザがこの機能をサポートしていない可能性があります。');
+      alert(`録画の開始に失敗しました: ${error instanceof Error ? error.message : '不明なエラー'}`);
     }
   }, []);
 
@@ -1368,8 +1426,13 @@ const SimpleMotionAnalyzer: React.FC = () => {
                 className="absolute bottom-4 right-4 bg-blue-500 text-white rounded-full p-3 shadow-lg z-10"
                 title="カメラ切り替え"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 16v1a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1" />
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M18 22v-6" />
+                  <path d="M15 19l3 3 3-3" />
+                  <path d="M18 2v6" />
+                  <path d="M15 5l3-3 3 3" />
                 </svg>
               </button>
             )}
