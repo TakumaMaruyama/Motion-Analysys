@@ -397,13 +397,33 @@ export function MotionAnalyzer() {
       
       // モーショントラッキングデータを追加
       const newTrackingData: LandmarkData = {
-        frame: currentFrameRef.current,
+        pose: landmarks,
+        faceMesh: results.faceLandmarks?.map((lm: any) => ({
+          x: lm.x * canvasRef.current!.width,
+          y: lm.y * canvasRef.current!.height,
+          z: lm.z || 0,
+          visibility: lm.visibility || 0
+        })) || [],
+        leftHand: results.leftHandLandmarks?.map((lm: any) => ({
+          x: lm.x * canvasRef.current!.width,
+          y: lm.y * canvasRef.current!.height,
+          z: lm.z || 0,
+          visibility: lm.visibility || 0
+        })) || [],
+        rightHand: results.rightHandLandmarks?.map((lm: any) => ({
+          x: lm.x * canvasRef.current!.width,
+          y: lm.y * canvasRef.current!.height,
+          z: lm.z || 0,
+          visibility: lm.visibility || 0
+        })) || [],
         timestamp: videoRef.current?.currentTime || 0,
-        position: {
-          x: Math.floor(canvasRef.current.width / 2),
-          y: Math.floor(canvasRef.current.height / 2)
-        },
-        landmarks: landmarks
+        frameIndex: currentFrameRef.current,
+        confidence: {
+          pose: results.poseLandmarks ? 1 : 0,
+          face: results.faceLandmarks ? 1 : 0,
+          leftHand: results.leftHandLandmarks ? 1 : 0,
+          rightHand: results.rightHandLandmarks ? 1 : 0
+        }
       };
       
       tempMotionDataRef.current.push(newTrackingData);
@@ -481,9 +501,17 @@ export function MotionAnalyzer() {
       
       // メモリ使用量を考慮して上限を設定
       if (processedFramesRef.current.length < 10000) {
+        const startTime = performance.now();
         processedFramesRef.current.push({
           imageData,
-          timestamp
+          timestamp,
+          sourceTime: videoRef.current?.currentTime || 0,
+          index: processedFramesRef.current.length,
+          metadata: {
+            processingTime: performance.now() - startTime,
+            captureTime: Date.now(),
+            quality: 1.0
+          }
         });
         
         // フレーム数をコンソールに出力（デバッグ用）
@@ -1411,7 +1439,11 @@ export function MotionAnalyzer() {
           }
         },
         motion_tracking: tempMotionDataRef.current,
-        landmarks_count: tempMotionDataRef.current.length > 0 ? tempMotionDataRef.current[0].landmarks?.length || 0 : 0,
+        landmarks_count: tempMotionDataRef.current.length > 0 ? 
+          (tempMotionDataRef.current[0].pose?.length || 0) + 
+          (tempMotionDataRef.current[0].faceMesh?.length || 0) + 
+          (tempMotionDataRef.current[0].leftHand?.length || 0) + 
+          (tempMotionDataRef.current[0].rightHand?.length || 0) : 0,
         landmark_types: [
           "頭部", "左肩", "右肩", "左肘", "右肘", "左手首", "右手首",
           "左腰", "右腰", "左膝", "右膝", "左足首", "右足首"
