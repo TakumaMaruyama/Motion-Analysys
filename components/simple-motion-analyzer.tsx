@@ -1388,6 +1388,8 @@ const SimpleMotionAnalyzer: React.FC = () => {
 
   return (
     <div className="flex flex-col items-center w-full max-w-4xl mx-auto p-4">
+      <h1 className="text-2xl font-bold mb-4">モーション分析</h1>
+      
       {/* タブ切り替え */}
       <div className="flex space-x-2 mb-4">
         <button
