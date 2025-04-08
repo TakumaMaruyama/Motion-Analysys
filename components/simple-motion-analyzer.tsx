@@ -36,6 +36,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
   const [outputVideoUrl, setOutputVideoUrl] = useState<string | null>(null);
+  const [recordedMimeType, setRecordedMimeType] = useState<string | null>(null);
   const [originalFrameRate, setOriginalFrameRate] = useState<number>(30);
   const [uploadedVideo, setUploadedVideo] = useState<File | null>(null);
   const [uploadedVideoUrl, setUploadedVideoUrl] = useState<string | null>(null);
@@ -98,35 +99,6 @@ const SimpleMotionAnalyzer: React.FC = () => {
   // グローバル変数の代わりにuseRefを使用するように修正
   const analysisTimerIdRef = useRef<NodeJS.Timeout>();
   const videoProcessingIntervalIdRef = useRef<NodeJS.Timeout>();
-
-  // モバイルデバイス検出
-  const isMobile = typeof navigator !== 'undefined' && 
-    (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
-    (navigator.maxTouchPoints && navigator.maxTouchPoints > 2));
-
-  // MediaRecorder関連の定数
-  const getMimeTypes = () => [
-    'video/mp4;codecs=h264',
-    'video/mp4',
-    'video/webm;codecs=vp9',
-    'video/webm;codecs=h264',
-    'video/webm'
-  ];
-
-  // 常にMP4形式として保存
-  const extension = 'mp4';
-
-  // カメラの切り替え機能
-  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
-  
-  const toggleCamera = useCallback(() => {
-    if (videoStream) {
-      // 現在のストリームを停止
-      videoStream.getTracks().forEach(track => track.stop());
-      setVideoStream(null);
-    }
-    setFacingMode(prevMode => prevMode === 'user' ? 'environment' : 'user');
-  }, [videoStream]);
 
   // Holisticの初期化
   const initHolistic = useCallback(async () => {
@@ -259,88 +231,105 @@ const SimpleMotionAnalyzer: React.FC = () => {
     }
   }, [analysisMode]);
 
-  // カメラを初期化
+  // カメラの初期化
   const initCamera = useCallback(async () => {
     try {
       setIsLoading(true);
       console.log('カメラ初期化開始');
       
+      // 既存のリソースをクリーンアップ
+      if (cameraRef.current) {
+        cameraRef.current.stop();
+        cameraRef.current = null;
+      }
+      
       if (videoStream) {
-        // 既存のストリームがあれば停止
         videoStream.getTracks().forEach(track => track.stop());
       }
-
-      // カメラの設定
-      const constraints = {
+      
+      // ユーザーのカメラにアクセス
+      const constraints: MediaStreamConstraints = {
         video: {
-          facingMode: facingMode,
           width: { ideal: 1280 },
           height: { ideal: 720 },
-          frameRate: { ideal: 30, min: 15 }
-        }
+          frameRate: { ideal: 30 }
+        },
+        audio: false
       };
-
-      // カメラストリームを取得
+      
+      console.log('カメラアクセス要求');
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      console.log('カメラストリーム取得成功:', stream.getVideoTracks()[0].label);
       setVideoStream(stream);
-
-      // ビデオ要素にストリームを設定
+      
+      // フレームレートを取得
+      const videoTrack = stream.getVideoTracks()[0];
+      const settings = videoTrack.getSettings();
+      const actualFrameRate = settings.frameRate || 30;
+      setOriginalFrameRate(actualFrameRate);
+      console.log('取得したフレームレート:', actualFrameRate);
+      
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        console.log('ビデオに接続、再生開始');
         await videoRef.current.play();
         
-        // キャンバスのサイズをビデオに合わせる
+        // キャンバスのサイズを設定
         if (canvasRef.current) {
           canvasRef.current.width = videoRef.current.videoWidth;
           canvasRef.current.height = videoRef.current.videoHeight;
-          console.log(`キャンバスサイズ設定: ${canvasRef.current.width}x${canvasRef.current.height}`);
+          console.log('キャンバスサイズ設定:', canvasRef.current.width, 'x', canvasRef.current.height);
         }
-      }
-
-      // Holisticを初期化（まだ初期化されていない場合）
-      if (!holisticRef.current) {
+        
+        // まずHolisticを初期化
+        console.log('カメラ接続後、Holisticを初期化');
         const success = await initHolistic();
+        
         if (!success) {
-          throw new Error('Holistic初期化に失敗しました');
+          throw new Error("Holistic初期化に失敗");
+        }
+        
+        // Holisticの準備ができてから、カメラを接続
+        if (holisticRef.current) {
+          console.log('Camera-Holistic接続を設定');
+          cameraRef.current = new Camera(videoRef.current, {
+            onFrame: async () => {
+              if (holisticRef.current && videoRef.current) {
+                try {
+                  await holisticRef.current.send({ image: videoRef.current });
+                } catch (e) {
+                  console.error("Holistic処理エラー:", e);
+                }
+              }
+            },
+            width: videoRef.current.videoWidth,
+            height: videoRef.current.videoHeight
+          });
+          
+          console.log('カメラ開始');
+          await cameraRef.current.start();
+          console.log('カメラ開始完了');
         }
       }
       
-      // カメラユーティリティの設定
-      if (videoRef.current && holisticRef.current) {
-        if (cameraRef.current) {
-          cameraRef.current.stop();
-        }
-        
-        cameraRef.current = new Camera(videoRef.current, {
-          onFrame: async () => {
-            if (videoRef.current && holisticRef.current) {
-              try {
-                await holisticRef.current.send({image: videoRef.current});
-              } catch (err) {
-                console.warn('フレーム処理エラー:', err);
-              }
-            }
-          },
-          width: 1280,
-          height: 720
-        });
-        
-        console.log('カメラユーティリティ設定完了');
-        await cameraRef.current.start();
-        console.log('カメラ開始完了');
+      setIsLoading(false);
+    } catch (error) {
+      console.error('カメラの初期化に失敗しました:', error);
+      setIsLoading(false);
+      
+      // エラー時に既存のリソースをクリーンアップ
+      if (holisticRef.current) {
+        holisticRef.current.close();
+        holisticRef.current = null;
       }
-
-      // カメラ使用中のフラグを設定
-      setIsInitialized(true);
-      setIsLoading(false);
-      console.log('カメラ初期化完了');
-    } catch (err) {
-      console.error('カメラの初期化に失敗:', err);
-      setIsLoading(false);
+      
+      if (cameraRef.current) {
+        cameraRef.current.stop();
+        cameraRef.current = null;
+      }
+      
       setIsInitialized(false);
     }
-  }, [videoStream, facingMode, initHolistic]);
+  }, [initHolistic, videoStream]);
 
   // 動画ダウンロード関数を先に定義
   const downloadVideo = useCallback(() => {
@@ -351,60 +340,105 @@ const SimpleMotionAnalyzer: React.FC = () => {
     
     console.log('ダウンロード処理開始');
     
-    // 常にWebM形式として保存
+    // MIMEタイプから拡張子を決定
+    let extension = 'webm'; // デフォルト
+    let determinedMimeType = recordedMimeType; // ステートから取得
+
+    // recordedMimeType がなければ recordedChunks から推測
+    if (!determinedMimeType && recordedChunks.length > 0 && recordedChunks[0]?.type) {
+         determinedMimeType = recordedChunks[0].type;
+         console.log(`recordedMimeType がないため、Blobタイプ ${determinedMimeType} から推測`);
+    }
+
+    if (determinedMimeType) {
+        if (determinedMimeType.includes('mp4')) {
+            extension = 'mp4';
+        } else if (determinedMimeType.includes('webm')) {
+            extension = 'webm';
+        }
+         console.log(`MIMEタイプ ${determinedMimeType} から拡張子 ${extension} を特定`);
+    } else {
+        console.warn('MIMEタイプを特定できませんでした。デフォルトの拡張子 .webm を使用します。');
+    }
+
     const a = document.createElement('a');
     a.href = outputVideoUrl;
-    a.download = `motion-analysis-${new Date().toISOString()}.${extension}`;
+    // ファイル名のコロンをハイフンに置換
+    a.download = `motion-analysis-${new Date().toISOString().replace(/:/g, '-')}.${extension}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     console.log('ダウンロード処理完了');
-  }, [outputVideoUrl]);
+  }, [outputVideoUrl, recordedMimeType, recordedChunks]);
 
   // 録画停止
   const stopRecording = useCallback(() => {
-    console.log('録画停止処理');
+    console.log('[stopRecording] 開始');
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      console.log('MediaRecorderを停止');
+      console.log('[stopRecording] MediaRecorder停止処理を実行');
       
-      // 録画停止後の自動ダウンロードフラグを設定
-      shouldAutoDownloadRef.current = true;
+      // 録画停止後の自動ダウンロードフラグを設定 (※この機能は現在コメントアウトされているか、直接関係ない可能性)
+      // shouldAutoDownloadRef.current = true;
       
-      // オリジナルのonstopハンドラを保存
-      const originalOnStop = mediaRecorderRef.current.onstop;
-      
-      // 新しいonstopハンドラを設定
-      mediaRecorderRef.current.onstop = (event) => {
-        // オリジナルのハンドラを呼び出し
-        if (originalOnStop) {
-          if (mediaRecorderRef.current) {
-            originalOnStop.call(mediaRecorderRef.current, event);
-          }
-        }
+      // ★ onstop ハンドラの上書きはせず、startRecording で設定したものを使う
+      //    これにより、Blob生成とステート更新は startRecording の onstop で一貫して行われる
+      // const originalOnStop = mediaRecorderRef.current.onstop;
+      // mediaRecorderRef.current.onstop = (event) => {
+      //   console.log('[stopRecording] カスタム onstop ハンドラ開始');
+      //   if (originalOnStop) {
+      //     console.log('[stopRecording] オリジナル onstop を呼び出し');
+      //     if (mediaRecorderRef.current) {
+      //       originalOnStop.call(mediaRecorderRef.current, event);
+      //     }
+      //   }
         
-        // 自動ダウンロード
-        setTimeout(() => {
-          if (outputVideoUrl) {
-            downloadVideo();
-            // 処理完了メッセージを表示
-            alert('分析が完了し、動画が自動的にダウンロードされました');
-          }
-        }, 1000); // 1秒待ってダウンロード
-      };
+      //   // 自動ダウンロード (手動ダウンロードの問題解決後に検討)
+      //   // setTimeout(() => {
+      //   //   console.log('[stopRecording] 自動ダウンロード試行');
+      //   //   if (outputVideoUrl) {
+      //   //     console.log('[stopRecording] outputVideoUrl あり、downloadVideo 呼び出し');
+      //   //     downloadVideo();
+      //   //     alert('分析が完了し、動画が自動的にダウンロードされました');
+      //   //   } else {
+      //   //      console.log('[stopRecording] outputVideoUrl なし、ダウンロードスキップ');
+      //   //   }
+      //   // }, 1000); 
+      // };
       
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current = null;
-      setIsRecording(false);
+      try {
+          console.log('[stopRecording] mediaRecorder.stop() 呼び出し');
+          mediaRecorderRef.current.stop();
+          console.log('[stopRecording] mediaRecorder.stop() 呼び出し完了');
+      } catch (e) {
+          console.error('[stopRecording] mediaRecorder.stop() でエラー:', e);
+          // エラーが発生した場合でも、状態のリセットを試みる
+          setIsRecording(false);
+          mediaRecorderRef.current = null;
+      }
+
+      // ★ onstop が非同期で完了するのを待たずに isRecording を false にすると、
+      //    onstop 内でのステート更新が阻害される可能性があるため、
+      //    setIsRecording(false) は onstop ハンドラの finally ブロックで行うのがより安全。
+      // setIsRecording(false); // ← ここでは呼ばない
+      // mediaRecorderRef.current = null; // ← onstop 内で Blob 生成後に null にするのが安全かもしれない
+
     } else {
-      console.log('停止するMediaRecorderがない');
+      console.log(`[stopRecording] 停止するMediaRecorderがないか、状態が非アクティブです。 State: ${mediaRecorderRef.current?.state}`);
+      // 既に停止している場合や参照がない場合は、念のため状態をリセット
+      if (isRecording) {
+          console.log('[stopRecording] isRecording が true だったので false にリセット');
+          setIsRecording(false);
+      }
     }
-  }, [downloadVideo, outputVideoUrl]);
+    console.log('[stopRecording] 終了');
+  }, [isRecording]);
 
   // 録画開始
   const startRecording = useCallback(() => {
+    console.log('[startRecording] 開始');
     if (!canvasRef.current) {
-      console.error('キャンバスが見つかりません');
-      alert('キャンバスが見つかりません。カメラを接続してください。');
+      console.error('[startRecording] キャンバスが見つかりません');
+      alert('エラー: 描画領域が見つかりません。ページを再読み込みしてください。');
       return;
     }
     
@@ -413,124 +447,160 @@ const SimpleMotionAnalyzer: React.FC = () => {
       return;
     }
     
-    console.log('録画開始処理');
+    console.log('[startRecording] 録画開始処理本体');
+    console.log('[startRecording] 既存の録画情報をリセット');
     setRecordedChunks([]);
     setOutputVideoUrl(null);
+    setRecordedMimeType(null);
     frameCountRef.current = 0;
     startTimeRef.current = 0;
     
     try {
-      // ブラウザがMediaRecorderをサポートしているか確認
-      if (!window.MediaRecorder) {
-        throw new Error('MediaRecorderがサポートされていません。');
-      }
-      
       // ストリームの取得
       console.log('キャンバスからストリーム取得 フレームレート:', originalFrameRate);
-      
-      // キャンバスからストリームを取得する
-      const stream = canvasRef.current.captureStream(originalFrameRate || 30);
+      const stream = canvasRef.current.captureStream(originalFrameRate);
       
       if (!stream || stream.getVideoTracks().length === 0) {
-        throw new Error('ストリームまたはビデオトラックの取得に失敗しました。');
+        console.error('ストリームまたはビデオトラックの取得に失敗');
+        alert('エラー: カメラ映像の取得に失敗しました。カメラへのアクセス許可を確認してください。');
+        return;
       }
       
-      console.log(`取得したストリーム: トラック数=${stream.getTracks().length}, トラック詳細:`, stream.getVideoTracks()[0].getSettings());
+      console.log(`取得したストリーム: トラック数=${stream.getTracks().length}`);
       
-      // コーデックの対応確認
-      let options = {};
-      const supportedTypes = getMimeTypes();
-      let selectedType = '';
+      // コーデックの対応確認とオプション設定 (H.264/MP4を優先)
+      let options: MediaRecorderOptions | undefined = undefined;
+      const supportedTypes = [
+        { mimeType: 'video/mp4;codecs=h264', extension: 'mp4' }, // iOS/Safari向け
+        { mimeType: 'video/webm;codecs=vp9', extension: 'webm' },
+        { mimeType: 'video/webm;codecs=vp8', extension: 'webm' },
+        { mimeType: 'video/webm', extension: 'webm' }, // フォールバック
+         { mimeType: 'video/mp4', extension: 'mp4'} // フォールバック
+      ];
       
-      for (const type of supportedTypes) {
-        try {
-          if (MediaRecorder.isTypeSupported(type)) {
-            options = {
-              mimeType: type,
-              videoBitsPerSecond: 2500000 // ビットレートを下げて安定性を向上
-            };
-            selectedType = type;
-            console.log(`${type}コーデック利用`);
-            break;
-          }
-        } catch (e) {
-          console.warn(`${type}の検証中にエラー:`, e);
+      for (const typeInfo of supportedTypes) {
+        if (MediaRecorder.isTypeSupported(typeInfo.mimeType)) {
+          options = {
+            mimeType: typeInfo.mimeType,
+            videoBitsPerSecond: 5000000 // 5 Mbps (必要に応じて調整)
+          };
+          console.log(`${typeInfo.mimeType} コーデック利用`);
+          break;
         }
       }
-      
-      if (!selectedType) {
-        console.warn('対応するMIMEタイプが見つかりませんでした。デフォルト設定を使用します。');
+
+      if (!options) {
+          console.error('対応する録画コーデックが見つかりません');
+          alert('エラー: お使いのブラウザでは動画の録画形式がサポートされていません。別のブラウザ（Chrome, Firefoxなど）をお試しください。');
+          return;
       }
       
       // MediaRecorderインスタンスの作成
-      console.log('MediaRecorder作成', options);
+      console.log('[startRecording] MediaRecorder作成', options);
       const mediaRecorder = new MediaRecorder(stream, options);
-      const chunks: Blob[] = [];
+      mediaRecorderRef.current = mediaRecorder;
+      const localChunks: Blob[] = [];
       
       // データ取得イベントハンドラ
       mediaRecorder.ondataavailable = (e) => {
+        console.log(`[ondataavailable] データ受信: size=${e.data.size}, type=${e.data.type}`);
         if (e.data && e.data.size > 0) {
-          console.log(`データチャンクサイズ: ${e.data.size} バイト`);
-          chunks.push(e.data);
-          setRecordedChunks(current => [...current, e.data]);
+          localChunks.push(e.data);
+           // ★ recordedChunks ステートも更新 (downloadVideo のフォールバック用)
+           setRecordedChunks(prev => {
+               console.log(`[ondataavailable] setRecordedChunks: prev length=${prev.length}, new chunk size=${e.data.size}`);
+               return [...prev, e.data];
+            });
         } else {
-          console.warn('空のデータチャンク');
+          console.warn('[ondataavailable] 空のデータチャンク');
         }
-      };
-      
-      // エラーハンドリング
-      mediaRecorder.onerror = (event) => {
-        console.error('MediaRecorderエラー:', event);
-        alert(`録画中にエラーが発生しました: ${event.type}`);
       };
       
       // 録画停止イベントハンドラ
       mediaRecorder.onstop = () => {
-        console.log(`録画終了、録画チャンク数: ${chunks.length}`);
+        console.log(`[onstop] 録画終了イベント発生、録画チャンク数: ${localChunks.length}`);
         
-        if (chunks.length === 0) {
-          console.error('録画データがありません');
-          alert('録画データを取得できませんでした。');
+        if (localChunks.length === 0) {
+          console.error('[onstop] 録画データがありません');
+           alert('エラー: 録画データが空です。録画時間が短すぎるか、エラーが発生した可能性があります。');
+          console.log('[onstop] URLとMIMEタイプをクリア');
+          setOutputVideoUrl(null); 
+          setRecordedMimeType(null); 
+          console.log('[onstop] isRecording を false に設定 (データなし)');
+          setIsRecording(false); 
+          mediaRecorderRef.current = null;
           return;
         }
         
+        const mimeType = mediaRecorder.mimeType || options?.mimeType || 'video/webm'; 
+        console.log(`[onstop] Blob作成開始: MIMEタイプ=${mimeType}`);
         try {
-          // Blobの作成
-          const mimeType = mediaRecorder.mimeType || 'video/webm';
-          const extension = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
-          const blob = new Blob(chunks, { type: mimeType });
-          
-          console.log(`最終Blobサイズ: ${blob.size} バイト、タイプ: ${blob.type}`);
-          
-          if (blob.size > 0) {
-            const url = URL.createObjectURL(blob);
-            console.log('Blob URL作成:', url);
-            setOutputVideoUrl(url);
-            
-            // 録画終了を通知
-            alert('録画が完了しました！');
-          } else {
-            throw new Error('Blobのサイズが0です');
-          }
-        } catch (err) {
-          console.error('録画データの処理中にエラー:', err);
-          alert(`録画データの処理中にエラーが発生しました: ${err}`);
+            const blob = new Blob(localChunks, { type: mimeType });
+            console.log(`[onstop] Blob作成完了: size=${blob.size}, type=${blob.type}`);
+
+             if (blob.size > 0) {
+              const url = URL.createObjectURL(blob);
+              console.log('[onstop] Blob URL作成:', url);
+              console.log('[onstop] outputVideoUrl と recordedMimeType を設定');
+              setOutputVideoUrl(url);
+              setRecordedMimeType(mimeType);
+            } else {
+              console.error('[onstop] Blobのサイズが0です');
+              alert('エラー: 生成された動画ファイルのサイズが0です。録画に失敗した可能性があります。');
+               console.log('[onstop] URLとMIMEタイプをクリア (Blobサイズ0)');
+               setOutputVideoUrl(null);
+               setRecordedMimeType(null);
+            }
+        } catch (blobError) {
+             console.error('[onstop] Blobの作成に失敗しました:', blobError);
+             alert('エラー: 動画ファイルの生成中に問題が発生しました。');
+             console.log('[onstop] URLとMIMEタイプをクリア (Blob生成エラー)');
+             setOutputVideoUrl(null);
+             setRecordedMimeType(null);
+        } finally {
+             console.log('[onstop] isRecording を false に設定 (finallyブロック)');
+             setIsRecording(false);
+             mediaRecorderRef.current = null;
+             console.log('[onstop] onstop ハンドラ終了 (finally)');
         }
       };
       
+      // エラーハンドリング
+      mediaRecorder.onerror = (event: Event) => { 
+         const errorEvent = event as unknown as { error: DOMException }; 
+        console.error('[onerror] MediaRecorderエラー発生:', errorEvent.error);
+         alert(`録画エラーが発生しました: ${errorEvent.error.name} - ${errorEvent.error.message}。ブラウザまたは設定を確認してください。`);
+         console.log('[onerror] isRecording を false に設定');
+         setIsRecording(false); 
+         console.log('[onerror] URLとMIMEタイプをクリア');
+         setOutputVideoUrl(null); 
+         setRecordedMimeType(null); 
+         // ストリーム停止などのクリーンアップ
+         try {
+             console.log('[onerror] ストリームトラックを停止');
+             stream.getTracks().forEach(track => track.stop());
+         } catch (e) {
+             console.error('[onerror] ストリーム停止中のエラー:', e);
+         }
+         mediaRecorderRef.current = null;
+         console.log('[onerror] onerror ハンドラ終了');
+      };
+      
       // 録画開始
-      mediaRecorderRef.current = mediaRecorder;
-      mediaRecorder.start(1000); // 1秒ごとにデータを取得
-      console.log('録画開始: ', mediaRecorder.mimeType);
+      console.log('[startRecording] mediaRecorder.start() 呼び出し');
+      mediaRecorder.start(1000); 
+      // ★ start() が成功したとみなし、isRecording を true に設定
+      console.log('[startRecording] isRecording を true に設定');
       setIsRecording(true);
-      
-      // 録画開始を通知
-      alert('録画を開始しました。「録画停止」ボタンを押すと録画を終了します。');
-      
+      console.log('[startRecording] 録画開始完了、MIMEタイプ:', mediaRecorder.mimeType);
+
     } catch (error) {
-      console.error('録画の開始に失敗しました:', error);
-      alert(`録画の開始に失敗しました: ${error instanceof Error ? error.message : '不明なエラー'}`);
+      console.error('[startRecording] 録画開始処理全体でエラーが発生しました:', error);
+       alert('録画の開始に失敗しました。カメラへのアクセス許可やブラウザの互換性を確認してください。');
+       console.log('[startRecording] isRecording を false に設定 (catchブロック)');
+       setIsRecording(false); // エラー時も状態をリセット
     }
+    console.log('[startRecording] 終了');
   }, [isRecording, originalFrameRate]);
 
   // 動画分析の開始処理
@@ -1079,8 +1149,8 @@ const SimpleMotionAnalyzer: React.FC = () => {
       if (isRecording) {
         stopRecording();
       }
-      if (videoStream) {
-        videoStream.getTracks().forEach(track => track.stop());
+      if (cameraRef.current) {
+        cameraRef.current.stop();
       }
     } else if (analysisMode === 'video') {
       if (isVideoAnalyzing) {
@@ -1140,7 +1210,11 @@ const SimpleMotionAnalyzer: React.FC = () => {
       
       // コーデックの対応確認
       let options = {};
-      const supportedTypes = getMimeTypes();
+      const supportedTypes = [
+        'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
+        'video/webm'
+      ];
       
       for (const type of supportedTypes) {
         if (MediaRecorder.isTypeSupported(type)) {
@@ -1178,9 +1252,8 @@ const SimpleMotionAnalyzer: React.FC = () => {
         
         // Blobの作成
         const mimeType = mediaRecorder.mimeType || 'video/webm';
-        const extension = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
+        console.log(`Blob作成: MIMEタイプ=${mimeType}`);
         const blob = new Blob(chunks, { type: mimeType });
-        const url = URL.createObjectURL(blob);
         
         console.log(`最終Blobサイズ: ${blob.size} バイト、タイプ: ${blob.type}`);
         
@@ -1256,100 +1329,86 @@ const SimpleMotionAnalyzer: React.FC = () => {
       
       // 動画の再生位置を先頭に戻す
       uploadedVideoRef.current.currentTime = 0;
-      uploadedVideoRef.current.playbackRate = 0.5; // 再生速度を遅くして処理をしやすくする
       
       // 録画設定
       const canvas = canvasRef.current;
-      const stream = canvas.captureStream(15); // フレームレートを15fpsに下げてコマ落ちを減らす
+      const stream = canvas.captureStream(30); // 30fpsで録画
       
       // MediaRecorderのオプション設定
-      const supportedTypes = [
-        'video/webm;codecs=vp9',
-        'video/webm;codecs=vp8',
-        'video/webm;codecs=h264',
-        'video/webm',
-        'video/mp4;codecs=h264',
-        'video/mp4'
-      ];
-      
-      // サポートされているMIMEタイプを探す
-      let options = {};
-      for (const type of supportedTypes) {
-        if (MediaRecorder.isTypeSupported(type)) {
-          options = {
-            mimeType: type,
-            videoBitsPerSecond: 2500000 // ビットレートを下げて安定性向上
-          };
-          console.log(`使用するコーデック: ${type}`);
-          break;
-        }
-      }
-      
-      // MediaRecorderインスタンスの作成
-      console.log('MediaRecorder作成', options);
+      const options = { mimeType: 'video/webm;codecs=vp9', videoBitsPerSecond: 5000000 };
       const mediaRecorder = new MediaRecorder(stream, options);
+      
+      // データ収集用の配列
       const chunks: Blob[] = [];
       
       // データが利用可能になったら収集
       mediaRecorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) {
           chunks.push(e.data);
-          console.log(`データチャンク取得: ${e.data.size} バイト`);
         }
       };
       
       // 録画が完了したら動画をダウンロード
       mediaRecorder.onstop = () => {
         // 動画の生成
-        const mimeType = mediaRecorder.mimeType || 'video/webm';
-        const extension = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
-        const blob = new Blob(chunks, { type: mimeType });
+        const blob = new Blob(chunks, { type: 'video/webm' });
         const url = URL.createObjectURL(blob);
-        
-        console.log(`生成された動画の情報: サイズ=${(blob.size/1024/1024).toFixed(2)}MB, 形式=${mimeType}`);
         
         // ダウンロードリンクを生成して自動的にクリック
         const a = document.createElement('a');
         a.href = url;
-        a.download = `motion-analysis-recording-${new Date().toISOString().replace(/:/g, '-')}.${extension}`;
+        a.download = `motion-analysis-recording-${new Date().toISOString().replace(/:/g, '-')}.webm`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         
-        // 元の再生速度に戻す
-        if (uploadedVideoRef.current) {
-          uploadedVideoRef.current.playbackRate = 1.0;
-        }
-        
         alert('録画が完了し、動画がダウンロードされました！');
       };
       
-      // 録画開始
-      mediaRecorder.start(500); // 500msごとにデータを取得してチャンクサイズを小さくする
+      // 動画を再生
+      const videoElement = uploadedVideoRef.current;
+      videoElement.play();
       
-      // 動画の再生を開始して録画する
-      uploadedVideoRef.current.play().then(() => {
-        console.log('動画の再生を開始しました');
-        
-        // 動画の長さが分かったら、その時間後に録画を自動的に停止する
-        const duration = uploadedVideoRef.current!.duration;
-        console.log(`動画の長さ: ${duration}秒`);
-        
-        setTimeout(() => {
-          if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-            console.log('録画を自動停止');
-            mediaRecorder.stop();
+      // ランドマークの処理と描画を開始
+      const ctx = canvas.getContext('2d');
+      const processFrame = async () => {
+        try {
+          if (!videoElement.paused && !videoElement.ended) {
+            // フレームをキャンバスに描画
+            ctx?.clearRect(0, 0, canvas.width, canvas.height);
+            ctx?.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+            
+            // MediaPipeで解析
+            if (holisticRef.current) {
+              await holisticRef.current.send({ image: canvas });
+            }
+            
+            // 次のフレームを処理
+            requestAnimationFrame(processFrame);
+          } else if (videoElement.ended) {
+            // 動画が終了したら録画を停止
+            if (mediaRecorder.state !== 'inactive') {
+              mediaRecorder.stop();
+            }
           }
-        }, duration * 1000 * (1 / 0.5) + 1000); // 再生速度を考慮した停止時間 + 余裕
-      }).catch(err => {
-        console.error('動画の再生開始に失敗:', err);
-        alert('動画の再生に失敗しました');
-      });
+        } catch (e) {
+          console.error('フレーム処理エラー:', e);
+          requestAnimationFrame(processFrame);
+        }
+      };
       
-      alert('録画を開始しました。動画が終わるまでお待ちください...');
+      // 録画を開始
+      mediaRecorder.start(100); // 100msごとにデータを収集
+      
+      // フレーム処理を開始
+      processFrame();
+      
+      // ユーザーに録画開始を通知
+      alert('ランドマーク付き動画の録画を開始します。動画が終了すると自動的にダウンロードされます。');
+      
     } catch (error) {
       console.error('録画の開始に失敗しました:', error);
-      alert(`録画の開始に失敗しました: ${error instanceof Error ? error.message : '不明なエラー'}`);
+      alert('録画の開始に失敗しました。ブラウザがこの機能をサポートしていない可能性があります。');
     }
   }, []);
 
@@ -1388,8 +1447,6 @@ const SimpleMotionAnalyzer: React.FC = () => {
 
   return (
     <div className="flex flex-col items-center w-full max-w-4xl mx-auto p-4">
-      <h1 className="text-2xl font-bold mb-4">モーション分析</h1>
-      
       {/* タブ切り替え */}
       <div className="flex space-x-2 mb-4">
         <button
@@ -1408,35 +1465,22 @@ const SimpleMotionAnalyzer: React.FC = () => {
       
       {/* カメラモード */}
       {analysisMode === 'camera' && (
-        <div className="w-full flex flex-col items-center">
-          <div className="relative w-full max-w-2xl mb-4">
+        <div className="flex flex-col items-center w-full">
+          <div className="relative w-full aspect-video bg-black mb-4">
             <video
               ref={videoRef}
-              className="w-full h-auto border rounded"
+              className="absolute inset-0 w-full h-full object-contain opacity-0"
               playsInline
               muted
             />
             <canvas
               ref={canvasRef}
-              className="absolute top-0 left-0 w-full h-full pointer-events-none"
+              className="absolute inset-0 w-full h-full object-contain"
             />
-            
-            {/* カメラ切り替えボタン */}
-            {isMobile && (
-              <button
-                onClick={toggleCamera}
-                className="absolute bottom-4 right-4 bg-blue-500 text-white rounded-full p-3 shadow-lg z-10"
-                title="カメラ切り替え"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M20 16v1a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1" />
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M18 22v-6" />
-                  <path d="M15 19l3 3 3-3" />
-                  <path d="M18 2v6" />
-                  <path d="M15 5l3-3 3 3" />
-                </svg>
-              </button>
+            {isLoading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white">
+                読み込み中...
+              </div>
             )}
           </div>
           
