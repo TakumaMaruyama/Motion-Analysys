@@ -303,7 +303,8 @@ const SimpleMotionAnalyzer: React.FC = () => {
               }
             },
             width: videoRef.current.videoWidth,
-            height: videoRef.current.videoHeight
+            height: videoRef.current.videoHeight,
+            facingMode: 'environment'
           });
           
           console.log('カメラ開始');
