@@ -1,4 +1,4 @@
 export const metadata = {
-    title: 'ハンドジェスチャー分析アプリ',
-    description: '動画のハンドジェスチャーを分析し、ランドマークを付与するアプリケーション',
+    title: 'Motion Analysis',
+    description: '高度な動作分析プラットフォーム',
   };

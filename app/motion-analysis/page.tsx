@@ -1,5 +1,5 @@
 import React from 'react';
-import { MotionAnalyzer } from '../../components/motion-analyzer';
+import { MotionAnalyzer } from '@/components/motion-analyzer';
 
 export default function MotionAnalysisPage() {
   return (

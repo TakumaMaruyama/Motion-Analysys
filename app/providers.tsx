@@ -1,14 +1,18 @@
 "use client";
 
+import { ThemeProvider } from 'next-themes';
+import React from 'react';
 import SupabaseProvider from '../providers/SupabaseProvider';
 import StateProvider from '../providers/StateProvider';
 
-export function Providers({ children }: { children: React.ReactNode }) {
+export default function Providers({ children }: { children: React.ReactNode }) {
   return (
-    <SupabaseProvider>
-      <StateProvider>
-        {children}
-      </StateProvider>
-    </SupabaseProvider>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+      <SupabaseProvider>
+        <StateProvider>
+          {children}
+        </StateProvider>
+      </SupabaseProvider>
+    </ThemeProvider>
   );
 }

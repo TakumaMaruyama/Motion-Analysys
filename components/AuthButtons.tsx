@@ -1,24 +1,34 @@
+"use client";
+
 import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
+import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
 
 const AuthButtons: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const router = useRouter();
 
-  const handleLogin = async () => {
-    // Supabase Auth login logic would go here
-  };
+  useEffect(() => {
+    const checkAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      setIsAuthenticated(!!session);
+    };
+    checkAuth();
+  }, []);
 
-  const handleSignup = async () => {
-    // Supabase Auth signup logic would go here
+  const handleLogin = () => {
+    router.push('/auth/login');
   };
 
   const handleLogout = async () => {
-    // Supabase Auth logout logic would go here
+    await supabase.auth.signOut();
+    setIsAuthenticated(false);
+    router.push('/');
   };
 
   return (
-    <div className="flex flex-col gap-4 items-center justify-center bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+    <div>
       {!isAuthenticated ? (
         <>
           <Button 
@@ -27,18 +37,12 @@ const AuthButtons: React.FC = () => {
           >
             ログイン
           </Button>
-          <Separator className="my-2" />
-          <Button 
-            onClick={handleSignup}
-            className="w-full bg-[#10B981] text-white hover:bg-[#059669]"
-          >
-            新規登録
-          </Button>
         </>
       ) : (
         <Button 
+          variant="outline" 
           onClick={handleLogout}
-          className="w-full bg-[#EF4444] text-white hover:bg-[#DC2626]"
+          className="w-full border-[#3B82F6] text-[#3B82F6] hover:bg-[#EFF6FF]"
         >
           ログアウト
         </Button>

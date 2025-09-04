@@ -1,9 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
 import { Pose } from '@mediapipe/pose';
-import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile } from '@ffmpeg/util';
-
-const ffmpeg = new FFmpeg();
 
 // 全身の主要な骨格線の接続を定義
 const POSE_CONNECTIONS = [
@@ -181,7 +176,7 @@ export async function processVideo(videoBlob: Blob) {
     
     // MediaRecorderでキャプチャ
     const chunks: Blob[] = [];
-    const mediaRecorder = new MediaRecorder(captureCanvas.captureStream(video.videoWidth), {
+    const mediaRecorder = new MediaRecorder(captureCanvas.captureStream(fps), {
       mimeType: 'video/mp4;codecs=h264',
     });
     

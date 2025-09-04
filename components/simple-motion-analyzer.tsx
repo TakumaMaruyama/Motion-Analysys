@@ -2,11 +2,16 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Loader2, Download, Upload, Video, Play, Pause, Film } from 'lucide-react';
-import { Holistic, POSE_CONNECTIONS, HAND_CONNECTIONS, FACEMESH_TESSELATION } from '@mediapipe/holistic';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Loader2, Download, Upload, Video, Play, Pause, Film, Camera as CameraIcon, Settings, Info } from 'lucide-react';
+import { Holistic, POSE_CONNECTIONS, HAND_CONNECTIONS, FACEMESH_TESSELATION, Results } from '@mediapipe/holistic';
 import { Camera } from '@mediapipe/camera_utils';
 import { drawLandmarks, drawConnectors } from '@mediapipe/drawing_utils';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Progress } from '@/components/ui/progress';
+import { VideoEncoderService } from '@/lib/video-encoder';
+import type { ProcessedFrame } from '@/types/motion';
 
 type AnalysisMode = 'camera' | 'video';
 
@@ -59,13 +64,19 @@ const SimpleMotionAnalyzer: React.FC = () => {
   const holisticRef = useRef<Holistic | null>(null);
   const cameraRef = useRef<Camera | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const captureIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const frameCountRef = useRef<number>(0);
   const startTimeRef = useRef<number>(0);
   const lastFrameTimeRef = useRef<number>(0);
+  const lastProcessTsRef = useRef<number>(0);
+  const desiredProcessingFpsRef = useRef<number>(24);
   const animationFrameRef = useRef<number | null>(null);
   const videoAnalysisStartTimeRef = useRef<number>(0);
   const videoAnalysisFrameCountRef = useRef<number>(0);
   const shouldAutoDownloadRef = useRef<boolean>(false);
+  const latestResultsRef = useRef<Results | null>(null);
+  const capturedFramesRef = useRef<ProcessedFrame[]>([]);
+  const isHqExportingRef = useRef<boolean>(false);
 
   // 状態管理を拡張
   const [processingStatus, setProcessingStatus] = useState<VideoProcessingStatus>('idle');
@@ -78,6 +89,14 @@ const SimpleMotionAnalyzer: React.FC = () => {
     elapsedTime: 0,
     estimatedTimeRemaining: 0
   });
+
+  // 動画処理の進捗更新（他のコールバックから参照されるため早めに定義）
+  const updateProcessingProgress = useCallback((updates: Partial<ProcessingProgress>) => {
+    setProcessingProgress(prev => ({
+      ...prev,
+      ...updates
+    }));
+  }, []);
 
   // フレーム処理用のワーカー状態
   const frameProcessorRef = useRef<{
@@ -99,6 +118,62 @@ const SimpleMotionAnalyzer: React.FC = () => {
   // グローバル変数の代わりにuseRefを使用するように修正
   const analysisTimerIdRef = useRef<NodeJS.Timeout>();
   const videoProcessingIntervalIdRef = useRef<NodeJS.Timeout>();
+  
+  // なめらかな描画用レンダーループ
+  const drawOverlay = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number) => {
+    const results = latestResultsRef.current;
+    if (!results) return;
+    
+    // 顔のメッシュを描画
+    if (results.faceLandmarks) {
+      drawConnectors(ctx, results.faceLandmarks, FACEMESH_TESSELATION, { color: '#C0C0C070', lineWidth: 1 });
+    }
+    // 姿勢
+    if (results.poseLandmarks) {
+      drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 2 });
+      drawLandmarks(ctx, results.poseLandmarks, { color: '#FF0000', lineWidth: 1 });
+    }
+    // 手
+    if (results.leftHandLandmarks) {
+      drawConnectors(ctx, results.leftHandLandmarks, HAND_CONNECTIONS, { color: '#CC0000', lineWidth: 2 });
+      drawLandmarks(ctx, results.leftHandLandmarks, { color: '#00FF00', lineWidth: 1 });
+    }
+    if (results.rightHandLandmarks) {
+      drawConnectors(ctx, results.rightHandLandmarks, HAND_CONNECTIONS, { color: '#00CC00', lineWidth: 2 });
+      drawLandmarks(ctx, results.rightHandLandmarks, { color: '#FF0000', lineWidth: 1 });
+    }
+  }, []);
+
+  const renderLoop = useCallback(() => {
+    if (!canvasRef.current) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.imageSmoothingEnabled = true;
+    // 背景を最新フレームで更新
+    if (analysisMode === 'camera' && videoRef.current) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+    } else if (analysisMode === 'video' && uploadedVideoRef.current) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(uploadedVideoRef.current, 0, 0, canvas.width, canvas.height);
+    }
+    // 最新結果をオーバーレイ
+    drawOverlay(ctx, canvas.width, canvas.height);
+    animationFrameRef.current = requestAnimationFrame(renderLoop);
+  }, [analysisMode, drawOverlay]);
+
+  const startRenderLoop = useCallback(() => {
+    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+    animationFrameRef.current = requestAnimationFrame(renderLoop);
+  }, [renderLoop]);
+
+  const stopRenderLoop = useCallback(() => {
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+  }, []);
 
   // Holisticの初期化
   const initHolistic = useCallback(async () => {
@@ -132,61 +207,19 @@ const SimpleMotionAnalyzer: React.FC = () => {
       });
 
       holistic.onResults((results) => {
-        if (!canvasRef.current) return;
-        
-        const ctx = canvasRef.current.getContext('2d');
-        if (!ctx) return;
-        
-        // キャンバスをクリア
-        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        
-        // 背景として元のビデオフレームを描画
-        if (analysisMode === 'camera' && videoRef.current) {
-          ctx.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
-        } else if (analysisMode === 'video' && uploadedVideoRef.current) {
-          ctx.drawImage(uploadedVideoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
-        }
-        
-        // 顔のメッシュを描画
-        if (results.faceLandmarks) {
-          drawConnectors(ctx, results.faceLandmarks, FACEMESH_TESSELATION, { color: '#C0C0C070', lineWidth: 1 });
-        }
-        
-        // 姿勢のコネクターとランドマークを描画
-        if (results.poseLandmarks) {
-          drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 2 });
-          drawLandmarks(ctx, results.poseLandmarks, { color: '#FF0000', lineWidth: 1 });
-        }
-        
-        // 左手のコネクターとランドマークを描画
-        if (results.leftHandLandmarks) {
-          drawConnectors(ctx, results.leftHandLandmarks, HAND_CONNECTIONS, { color: '#CC0000', lineWidth: 2 });
-          drawLandmarks(ctx, results.leftHandLandmarks, { color: '#00FF00', lineWidth: 1 });
-        }
-        
-        // 右手のコネクターとランドマークを描画
-        if (results.rightHandLandmarks) {
-          drawConnectors(ctx, results.rightHandLandmarks, HAND_CONNECTIONS, { color: '#00CC00', lineWidth: 2 });
-          drawLandmarks(ctx, results.rightHandLandmarks, { color: '#FF0000', lineWidth: 1 });
-        }
-        
-        // フレームカウンタを更新
+        // 結果を最新値として保持（描画は別のレンダーループで実行）
+        latestResultsRef.current = results;
         const now = performance.now();
-        
         if (analysisMode === 'camera') {
           frameCountRef.current++;
-          
           if (startTimeRef.current === 0) {
             startTimeRef.current = now;
             lastFrameTimeRef.current = now;
           }
-          
           const elapsedTime = now - startTimeRef.current;
           const frameDelta = now - lastFrameTimeRef.current;
           const currentFps = frameDelta > 0 ? 1000 / frameDelta : 0;
-          
           lastFrameTimeRef.current = now;
-          
           setStats({
             framesProcessed: frameCountRef.current,
             fps: Math.round(currentFps),
@@ -196,18 +229,14 @@ const SimpleMotionAnalyzer: React.FC = () => {
           });
         } else if (analysisMode === 'video') {
           videoAnalysisFrameCountRef.current++;
-          
           if (videoAnalysisStartTimeRef.current === 0) {
             videoAnalysisStartTimeRef.current = now;
             lastFrameTimeRef.current = now;
           }
-          
           const elapsedTime = now - videoAnalysisStartTimeRef.current;
           const frameDelta = now - lastFrameTimeRef.current;
           const currentFps = frameDelta > 0 ? 1000 / frameDelta : 0;
-          
           lastFrameTimeRef.current = now;
-          
           setStats({
             framesProcessed: videoAnalysisFrameCountRef.current,
             fps: Math.round(currentFps),
@@ -220,8 +249,9 @@ const SimpleMotionAnalyzer: React.FC = () => {
       
       holisticRef.current = holistic;
       console.log('Holistic設定完了、初期化開始');
-      await holistic.initialize();
-      console.log('Holistic初期化完了');
+      // MediaPipe Holistic は初回 send 呼び出し時に内部的に読み込みが走るため
+      // 明示的な initialize を待たずに初期化完了扱いにする
+      console.log('Holistic初期化完了(暗黙ロード)');
       setIsInitialized(true);
       return true;
     } catch (error) {
@@ -259,8 +289,24 @@ const SimpleMotionAnalyzer: React.FC = () => {
       };
       
       console.log('カメラアクセス要求');
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (e) {
+        console.warn('背面カメラ取得に失敗。前面にフォールバックします:', e);
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      }
       setVideoStream(stream);
+
+      // 安定した解像度/フレームレートへ調整（利用可能な場合）
+      try {
+        const track = stream.getVideoTracks()[0];
+        await track.applyConstraints({
+          width: { ideal: 1280, max: 1280 },
+          height: { ideal: 720, max: 720 },
+          frameRate: { ideal: 30, max: 30 },
+        } as MediaTrackConstraints);
+      } catch {}
       
       // フレームレートを取得
       const videoTrack = stream.getVideoTracks()[0];
@@ -271,8 +317,17 @@ const SimpleMotionAnalyzer: React.FC = () => {
       
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        // iOS Safari など自動再生のために必要
+        videoRef.current.muted = true;
+        videoRef.current.playsInline = true;
+        (videoRef.current as any).setAttribute?.('playsinline', 'true');
+        (videoRef.current as any).setAttribute?.('autoplay', 'true');
         console.log('ビデオに接続、再生開始');
-        await videoRef.current.play();
+        try {
+          await videoRef.current.play();
+        } catch (playErr) {
+          console.warn('video.play() 失敗。ユーザー操作が必要な可能性:', playErr);
+        }
         
         // キャンバスのサイズを設定
         if (canvasRef.current) {
@@ -295,10 +350,15 @@ const SimpleMotionAnalyzer: React.FC = () => {
           cameraRef.current = new Camera(videoRef.current, {
             onFrame: async () => {
               if (holisticRef.current && videoRef.current) {
-                try {
-                  await holisticRef.current.send({ image: videoRef.current });
-                } catch (e) {
-                  console.error("Holistic処理エラー:", e);
+                const now = performance.now();
+                const minInterval = 1000 / desiredProcessingFpsRef.current;
+                if (now - lastProcessTsRef.current >= minInterval) {
+                  lastProcessTsRef.current = now;
+                  try {
+                    await holisticRef.current.send({ image: videoRef.current });
+                  } catch (e) {
+                    // フレーム落ち時は無視
+                  }
                 }
               }
             },
@@ -310,6 +370,8 @@ const SimpleMotionAnalyzer: React.FC = () => {
           console.log('カメラ開始');
           await cameraRef.current.start();
           console.log('カメラ開始完了');
+          // レンダーループ開始（結果反映をなめらかに）
+          startRenderLoop();
         }
       }
       
@@ -333,23 +395,96 @@ const SimpleMotionAnalyzer: React.FC = () => {
     }
   }, [initHolistic, videoStream]);
 
-  // 動画ダウンロード関数を先に定義
+  // 録画した動画をダウンロード
   const downloadVideo = useCallback(() => {
+    console.log('[downloadVideo] 開始');
+    console.log('[downloadVideo] 状態確認:', { 
+      outputVideoUrl: outputVideoUrl ? 'あり' : 'なし', 
+      recordedChunks: recordedChunks.length,
+      recordedMimeType
+    });
+    
     if (!outputVideoUrl) {
-      console.log('ダウンロードするURLがありません');
+      console.error('[downloadVideo] ダウンロードするURLがありません');
+      
+      // データはあるがURLが未設定の場合の回復処理
+      if (recordedChunks.length > 0) {
+        console.log(`[downloadVideo] outputVideoUrlがないが、recordedChunks(${recordedChunks.length}個)からBlobを作成`);
+        try {
+          // 適切なMIMEタイプを推測
+          let mimeType = 'video/webm';
+          if (recordedMimeType) {
+            mimeType = recordedMimeType;
+          } else if (recordedChunks[0]?.type) {
+            mimeType = recordedChunks[0].type;
+          }
+          
+          console.log(`[downloadVideo] 推測されたMIMEタイプ: ${mimeType}`);
+          const blob = new Blob(recordedChunks, { type: mimeType });
+          console.log(`[downloadVideo] 回復Blob作成完了: size=${blob.size}, type=${blob.type}`);
+          
+          if (blob.size > 0) {
+            const tempUrl = URL.createObjectURL(blob);
+            console.log('[downloadVideo] 一時URL作成:', tempUrl);
+            
+            // outputVideoUrlを設定（将来の使用のため）
+            setOutputVideoUrl(tempUrl);
+            setRecordedMimeType(mimeType);
+            
+            // 一時URLを使用してダウンロード
+            const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
+            const a = document.createElement('a');
+            a.href = tempUrl;
+            a.download = `motion-analysis-${new Date().toISOString().replace(/:/g, '-')}.${extension}`;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            
+            console.log('[downloadVideo] ダウンロードリンクをクリック');
+            a.click();
+            
+            // クリーンアップ
+            setTimeout(() => {
+              document.body.removeChild(a);
+              // URL.revokeObjectURL(tempUrl); // 再利用できるように保持
+              console.log('[downloadVideo] リンク要素を削除');
+            }, 100);
+            
+            console.log('[downloadVideo] 回復処理でダウンロード完了');
+            return;
+          } else {
+            console.error('[downloadVideo] 回復Blobのサイズが0です');
+            alert('エラー: 録画データが破損しています。録画をやり直してください。');
+          }
+        } catch (e) {
+          console.error('[downloadVideo] 回復処理中にエラー:', e);
+          alert('エラー: 録画データの回復中に問題が発生しました。');
+        }
+      } else {
+        console.error('[downloadVideo] 録画データがありません');
+        // 録画が正しく開始されるようにする
+        if (canvasRef.current && !isRecording && analysisMode === 'video') {
+          console.log('[downloadVideo] 録画データがないためユーザーに録画を促します');
+          alert('録画データがありません。まず「録画開始」ボタンをクリックして、動画を録画してください。');
+          return;
+        } else {
+          alert('エラー: ダウンロードする録画データがありません。録画を先に行ってください。');
+        }
+      }
       return;
     }
     
-    console.log('ダウンロード処理開始');
+    console.log('[downloadVideo] 通常のダウンロード処理開始 URL:', outputVideoUrl);
     
     // MIMEタイプから拡張子を決定
     let extension = 'webm'; // デフォルト
     let determinedMimeType = recordedMimeType; // ステートから取得
+    
+    console.log(`[downloadVideo] MIMEタイプ: ${determinedMimeType}, 録画チャンク数: ${recordedChunks.length}`);
 
     // recordedMimeType がなければ recordedChunks から推測
     if (!determinedMimeType && recordedChunks.length > 0 && recordedChunks[0]?.type) {
          determinedMimeType = recordedChunks[0].type;
-         console.log(`recordedMimeType がないため、Blobタイプ ${determinedMimeType} から推測`);
+      console.log(`[downloadVideo] recordedMimeType がないため、Blobタイプ ${determinedMimeType} から推測`);
     }
 
     if (determinedMimeType) {
@@ -358,54 +493,41 @@ const SimpleMotionAnalyzer: React.FC = () => {
         } else if (determinedMimeType.includes('webm')) {
             extension = 'webm';
         }
-         console.log(`MIMEタイプ ${determinedMimeType} から拡張子 ${extension} を特定`);
+      console.log(`[downloadVideo] MIMEタイプ ${determinedMimeType} から拡張子 ${extension} を特定`);
     } else {
-        console.warn('MIMEタイプを特定できませんでした。デフォルトの拡張子 .webm を使用します。');
+      console.warn('[downloadVideo] MIMEタイプを特定できませんでした。デフォルトの拡張子 .webm を使用します。');
     }
 
+    try {
+      // ダウンロードリンクを作成して自動クリック
     const a = document.createElement('a');
     a.href = outputVideoUrl;
-    // ファイル名のコロンをハイフンに置換
     a.download = `motion-analysis-${new Date().toISOString().replace(/:/g, '-')}.${extension}`;
+      a.style.display = 'none'; // 非表示
     document.body.appendChild(a);
+      
+      console.log('[downloadVideo] ダウンロードリンクをクリック');
     a.click();
+      
+      // クリーンアップ
+      setTimeout(() => {
     document.body.removeChild(a);
-    console.log('ダウンロード処理完了');
-  }, [outputVideoUrl, recordedMimeType, recordedChunks]);
+        console.log('[downloadVideo] リンク要素を削除');
+        // URL.revokeObjectURL(outputVideoUrl); // ここでは破棄しない（再ダウンロード用）
+      }, 100);
+      
+      console.log('[downloadVideo] ダウンロード処理完了');
+    } catch (e) {
+      console.error('[downloadVideo] ダウンロード処理中にエラー:', e);
+      alert('動画のダウンロード中にエラーが発生しました。ブラウザの設定を確認してください。');
+    }
+  }, [outputVideoUrl, recordedMimeType, recordedChunks, canvasRef, isRecording, analysisMode]);
 
   // 録画停止
   const stopRecording = useCallback(() => {
     console.log('[stopRecording] 開始');
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       console.log('[stopRecording] MediaRecorder停止処理を実行');
-      
-      // 録画停止後の自動ダウンロードフラグを設定 (※この機能は現在コメントアウトされているか、直接関係ない可能性)
-      // shouldAutoDownloadRef.current = true;
-      
-      // ★ onstop ハンドラの上書きはせず、startRecording で設定したものを使う
-      //    これにより、Blob生成とステート更新は startRecording の onstop で一貫して行われる
-      // const originalOnStop = mediaRecorderRef.current.onstop;
-      // mediaRecorderRef.current.onstop = (event) => {
-      //   console.log('[stopRecording] カスタム onstop ハンドラ開始');
-      //   if (originalOnStop) {
-      //     console.log('[stopRecording] オリジナル onstop を呼び出し');
-      //     if (mediaRecorderRef.current) {
-      //       originalOnStop.call(mediaRecorderRef.current, event);
-      //     }
-      //   }
-        
-      //   // 自動ダウンロード (手動ダウンロードの問題解決後に検討)
-      //   // setTimeout(() => {
-      //   //   console.log('[stopRecording] 自動ダウンロード試行');
-      //   //   if (outputVideoUrl) {
-      //   //     console.log('[stopRecording] outputVideoUrl あり、downloadVideo 呼び出し');
-      //   //     downloadVideo();
-      //   //     alert('分析が完了し、動画が自動的にダウンロードされました');
-      //   //   } else {
-      //   //      console.log('[stopRecording] outputVideoUrl なし、ダウンロードスキップ');
-      //   //   }
-      //   // }, 1000); 
-      // };
       
       try {
           console.log('[stopRecording] mediaRecorder.stop() 呼び出し');
@@ -417,13 +539,6 @@ const SimpleMotionAnalyzer: React.FC = () => {
           setIsRecording(false);
           mediaRecorderRef.current = null;
       }
-
-      // ★ onstop が非同期で完了するのを待たずに isRecording を false にすると、
-      //    onstop 内でのステート更新が阻害される可能性があるため、
-      //    setIsRecording(false) は onstop ハンドラの finally ブロックで行うのがより安全。
-      // setIsRecording(false); // ← ここでは呼ばない
-      // mediaRecorderRef.current = null; // ← onstop 内で Blob 生成後に null にするのが安全かもしれない
-
     } else {
       console.log(`[stopRecording] 停止するMediaRecorderがないか、状態が非アクティブです。 State: ${mediaRecorderRef.current?.state}`);
       // 既に停止している場合や参照がない場合は、念のため状態をリセット
@@ -432,178 +547,238 @@ const SimpleMotionAnalyzer: React.FC = () => {
           setIsRecording(false);
       }
     }
+    // HQキャプチャ停止
+    if (captureIntervalRef.current) {
+      clearInterval(captureIntervalRef.current);
+      captureIntervalRef.current = null;
+    }
     console.log('[stopRecording] 終了');
   }, [isRecording]);
 
+  // フレーム補間して60fpsでエクスポート
+  const exportHighQuality60fps = useCallback(async () => {
+    if (isHqExportingRef.current) return;
+    try {
+      const frames = capturedFramesRef.current;
+      if (!frames || frames.length < 2) {
+        alert('高画質出力のためのフレームが不足しています。先に録画してください。');
+        return;
+      }
+      isHqExportingRef.current = true;
+      setProcessingStatus('processing');
+      updateProcessingProgress({ status: 'processing', progress: 5 });
+
+      // ワーカーで補間
+      const worker = new Worker(new URL('../workers/frame-processor.worker.ts', import.meta.url), { type: 'module' });
+      const interpolated: ProcessedFrame[] = await new Promise((resolve, reject) => {
+        worker.onmessage = (e: MessageEvent) => {
+          const data = e.data as any;
+          if (data.type === 'interpolated') {
+            resolve(data.frames);
+            worker.terminate();
+          } else if (data.type === 'error') {
+            reject(new Error(data.error?.message || 'Worker error'));
+            worker.terminate();
+          }
+        };
+        worker.postMessage({ type: 'interpolate', frames, targetFPS: 60 });
+      });
+
+      updateProcessingProgress({ status: 'processing', progress: 50 });
+
+      // エンコード（WebCodecs）
+      const w = frames[0].imageData.width;
+      const h = frames[0].imageData.height;
+      const blob = await VideoEncoderService.encodeFramesToVideo(interpolated, {
+        width: w,
+        height: h,
+        frameRate: 60,
+        bitrate: 8_000_000,
+        codec: 'avc1.42001E',
+        latencyMode: 'quality',
+        hardwareAcceleration: 'prefer-hardware'
+      }, (p) => {
+        updateProcessingProgress({ status: 'processing', progress: 50 + Math.round(p * 45) });
+      });
+
+      const url = URL.createObjectURL(blob);
+      setOutputVideoUrl(url);
+      setProcessingStatus('completed');
+      updateProcessingProgress({ status: 'completed', progress: 100 });
+    } catch (e) {
+      console.error('高画質エクスポートエラー:', e);
+      alert('高画質エクスポートに失敗しました。最新のChrome系ブラウザでお試しください。');
+      setProcessingStatus('error');
+      updateProcessingProgress({ status: 'error', error: 'HQ export failed' });
+    } finally {
+      isHqExportingRef.current = false;
+    }
+  }, [updateProcessingProgress]);
+
   // 録画開始
   const startRecording = useCallback(() => {
-    console.log('[startRecording] 開始');
+    console.log('[startRecording] 録画開始 - エントリーポイント');
+    try {
     if (!canvasRef.current) {
       console.error('[startRecording] キャンバスが見つかりません');
-      alert('エラー: 描画領域が見つかりません。ページを再読み込みしてください。');
+        alert('エラー: 録画するキャンバスが見つかりません');
       return;
     }
     
     if (isRecording) {
-      console.log('すでに録画中です');
+        console.log('[startRecording] すでに録画中です');
       return;
     }
     
-    console.log('[startRecording] 録画開始処理本体');
-    console.log('[startRecording] 既存の録画情報をリセット');
+      // 既存データをクリア
     setRecordedChunks([]);
-    setOutputVideoUrl(null);
-    setRecordedMimeType(null);
-    frameCountRef.current = 0;
-    startTimeRef.current = 0;
-    
-    try {
-      // ストリームの取得
-      console.log('キャンバスからストリーム取得 フレームレート:', originalFrameRate);
-      const stream = canvasRef.current.captureStream(originalFrameRate);
+      setOutputVideoUrl('');
+      const chunks: Blob[] = [];
+
+      console.log('[startRecording] キャンバスからストリームを取得します');
+      const captureFps = Math.min(Math.max(15, Math.round(originalFrameRate || 30)), 30);
+      const stream = canvasRef.current.captureStream(captureFps); // 安定したFPSでキャプチャ
       
-      if (!stream || stream.getVideoTracks().length === 0) {
-        console.error('ストリームまたはビデオトラックの取得に失敗');
-        alert('エラー: カメラ映像の取得に失敗しました。カメラへのアクセス許可を確認してください。');
-        return;
-      }
-      
-      console.log(`取得したストリーム: トラック数=${stream.getTracks().length}`);
-      
-      // コーデックの対応確認とオプション設定 (H.264/MP4を優先)
-      let options: MediaRecorderOptions | undefined = undefined;
+      // サポートされているMIMEタイプを確認
       const supportedTypes = [
-        { mimeType: 'video/mp4;codecs=h264', extension: 'mp4' }, // iOS/Safari向け
-        { mimeType: 'video/webm;codecs=vp9', extension: 'webm' },
-        { mimeType: 'video/webm;codecs=vp8', extension: 'webm' },
-        { mimeType: 'video/webm', extension: 'webm' }, // フォールバック
-         { mimeType: 'video/mp4', extension: 'mp4'} // フォールバック
+        'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
+        'video/webm',
+        'video/mp4'
       ];
       
-      for (const typeInfo of supportedTypes) {
-        if (MediaRecorder.isTypeSupported(typeInfo.mimeType)) {
-          options = {
-            mimeType: typeInfo.mimeType,
-            videoBitsPerSecond: 5000000 // 5 Mbps (必要に応じて調整)
-          };
-          console.log(`${typeInfo.mimeType} コーデック利用`);
+      let mimeType = '';
+      for (const type of supportedTypes) {
+        if (MediaRecorder.isTypeSupported(type)) {
+          mimeType = type;
+          console.log(`[startRecording] サポートされているMIMEタイプ: ${mimeType}`);
           break;
         }
       }
 
-      if (!options) {
-          console.error('対応する録画コーデックが見つかりません');
-          alert('エラー: お使いのブラウザでは動画の録画形式がサポートされていません。別のブラウザ（Chrome, Firefoxなど）をお試しください。');
+      if (!mimeType) {
+        console.error('[startRecording] サポートされているMIMEタイプが見つかりません');
+        alert('エラー: お使いのブラウザでは録画がサポートされていません');
           return;
       }
       
-      // MediaRecorderインスタンスの作成
-      console.log('[startRecording] MediaRecorder作成', options);
+      // MediaRecorderの設定
+      const options = {
+        mimeType,
+        videoBitsPerSecond: 5000000 // 5Mbps に増加してブロックノイズを軽減
+      };
+
+      console.log('[startRecording] MediaRecorderを初期化します', options);
       const mediaRecorder = new MediaRecorder(stream, options);
-      mediaRecorderRef.current = mediaRecorder;
-      const localChunks: Blob[] = [];
       
-      // データ取得イベントハンドラ
-      mediaRecorder.ondataavailable = (e) => {
-        console.log(`[ondataavailable] データ受信: size=${e.data.size}, type=${e.data.type}`);
-        if (e.data && e.data.size > 0) {
-          localChunks.push(e.data);
-           // ★ recordedChunks ステートも更新 (downloadVideo のフォールバック用)
-           setRecordedChunks(prev => {
-               console.log(`[ondataavailable] setRecordedChunks: prev length=${prev.length}, new chunk size=${e.data.size}`);
-               return [...prev, e.data];
+      // データが利用可能になったときのイベントハンドラ
+      mediaRecorder.ondataavailable = (event) => {
+        console.log(`[ondataavailable] データチャンク取得: サイズ=${event.data.size} bytes, タイプ=${event.data.type}`);
+        if (event.data && event.data.size > 0) {
+          chunks.push(event.data);
+          console.log(`[ondataavailable] ローカルchunks配列に追加: 現在${chunks.length}個`);
+          
+          // React状態を更新
+          setRecordedChunks(prevChunks => {
+            const newChunks = [...prevChunks, event.data];
+            console.log(`[ondataavailable] React状態のrecordedChunksを更新: ${prevChunks.length}→${newChunks.length}個`);
+            return newChunks;
             });
         } else {
-          console.warn('[ondataavailable] 空のデータチャンク');
+          console.warn(`[ondataavailable] サイズが0のデータを受信しました`);
         }
       };
       
-      // 録画停止イベントハンドラ
+      // 録画が停止したときのイベントハンドラ
       mediaRecorder.onstop = () => {
-        console.log(`[onstop] 録画終了イベント発生、録画チャンク数: ${localChunks.length}`);
+        console.log(`[onstop] 録画停止 - ローカルchunks: ${chunks.length}個, recordedChunks: ${recordedChunks.length}個`);
         
-        if (localChunks.length === 0) {
-          console.error('[onstop] 録画データがありません');
-           alert('エラー: 録画データが空です。録画時間が短すぎるか、エラーが発生した可能性があります。');
-          console.log('[onstop] URLとMIMEタイプをクリア');
-          setOutputVideoUrl(null); 
-          setRecordedMimeType(null); 
-          console.log('[onstop] isRecording を false に設定 (データなし)');
-          setIsRecording(false); 
-          mediaRecorderRef.current = null;
+        // デバッグ用に実際のチャンクをログ出力
+        chunks.forEach((chunk, index) => {
+          console.log(`[onstop] チャンク #${index}: サイズ=${chunk.size} bytes, タイプ=${chunk.type}`);
+        });
+        
+        if (chunks.length === 0) {
+          console.error('[onstop] ローカルchunksが空です');
+          
+          // recordedChunksを確認
+          if (recordedChunks.length > 0) {
+            console.log(`[onstop] recordedChunksには${recordedChunks.length}個のチャンクがあります。これを使用します。`);
+            // recordedChunksを使用してBlobを作成
+            const blob = new Blob(recordedChunks, { type: mimeType });
+            console.log(`[onstop] recordedChunksからBlobを作成: サイズ=${blob.size} bytes`);
+            const videoUrl = URL.createObjectURL(blob);
+            setOutputVideoUrl(videoUrl);
+              setRecordedMimeType(mimeType);
+            } else {
+            console.error('[onstop] recordedChunksも空です。録画データがありません。');
+            alert('録画データが取得できませんでした。ブラウザの設定を確認してください。');
+          }
+             setIsRecording(false);
           return;
         }
         
-        const mimeType = mediaRecorder.mimeType || options?.mimeType || 'video/webm'; 
-        console.log(`[onstop] Blob作成開始: MIMEタイプ=${mimeType}`);
-        try {
-            const blob = new Blob(localChunks, { type: mimeType });
-            console.log(`[onstop] Blob作成完了: size=${blob.size}, type=${blob.type}`);
-
-             if (blob.size > 0) {
-              const url = URL.createObjectURL(blob);
-              console.log('[onstop] Blob URL作成:', url);
-              console.log('[onstop] outputVideoUrl と recordedMimeType を設定');
-              setOutputVideoUrl(url);
-              setRecordedMimeType(mimeType);
-            } else {
-              console.error('[onstop] Blobのサイズが0です');
-              alert('エラー: 生成された動画ファイルのサイズが0です。録画に失敗した可能性があります。');
-               console.log('[onstop] URLとMIMEタイプをクリア (Blobサイズ0)');
-               setOutputVideoUrl(null);
-               setRecordedMimeType(null);
-            }
-        } catch (blobError) {
-             console.error('[onstop] Blobの作成に失敗しました:', blobError);
-             alert('エラー: 動画ファイルの生成中に問題が発生しました。');
-             console.log('[onstop] URLとMIMEタイプをクリア (Blob生成エラー)');
-             setOutputVideoUrl(null);
-             setRecordedMimeType(null);
-        } finally {
-             console.log('[onstop] isRecording を false に設定 (finallyブロック)');
-             setIsRecording(false);
-             mediaRecorderRef.current = null;
-             console.log('[onstop] onstop ハンドラ終了 (finally)');
-        }
-      };
-      
-      // エラーハンドリング
-      mediaRecorder.onerror = (event: Event) => { 
-         const errorEvent = event as unknown as { error: DOMException }; 
-        console.error('[onerror] MediaRecorderエラー発生:', errorEvent.error);
-         alert(`録画エラーが発生しました: ${errorEvent.error.name} - ${errorEvent.error.message}。ブラウザまたは設定を確認してください。`);
-         console.log('[onerror] isRecording を false に設定');
+        // Blobを作成してURLを生成
+        const blob = new Blob(chunks, { type: mimeType });
+        console.log(`[onstop] Blobを作成: サイズ=${blob.size} bytes, タイプ=${blob.type}`);
+        
+        if (blob.size === 0) {
+          console.error('[onstop] 作成されたBlobのサイズが0です');
          setIsRecording(false); 
-         console.log('[onerror] URLとMIMEタイプをクリア');
-         setOutputVideoUrl(null); 
-         setRecordedMimeType(null); 
-         // ストリーム停止などのクリーンアップ
-         try {
-             console.log('[onerror] ストリームトラックを停止');
-             stream.getTracks().forEach(track => track.stop());
-         } catch (e) {
-             console.error('[onerror] ストリーム停止中のエラー:', e);
-         }
-         mediaRecorderRef.current = null;
-         console.log('[onerror] onerror ハンドラ終了');
+          alert('録画データが空です。ブラウザの互換性の問題かもしれません。');
+          return;
+        }
+        
+        const videoUrl = URL.createObjectURL(blob);
+        console.log(`[onstop] URL生成: ${videoUrl}`);
+        
+        // React状態を更新
+        setOutputVideoUrl(videoUrl);
+        setRecordedMimeType(mimeType);
+        setRecordedChunks(chunks); // ローカルchunksで最終的に更新
+        setIsRecording(false);
+        
+        console.log('[onstop] 録画完了 - 状態更新完了');
       };
-      
-      // 録画開始
-      console.log('[startRecording] mediaRecorder.start() 呼び出し');
-      mediaRecorder.start(1000); 
-      // ★ start() が成功したとみなし、isRecording を true に設定
-      console.log('[startRecording] isRecording を true に設定');
+
+      // MediaRecorderを開始
+      mediaRecorderRef.current = mediaRecorder;
+      mediaRecorder.start(100); // 100msごとにデータチャンクを取得（頻度を上げる）
       setIsRecording(true);
-      console.log('[startRecording] 録画開始完了、MIMEタイプ:', mediaRecorder.mimeType);
+      console.log('[startRecording] 録画を開始しました (チャンク間隔: 100ms)');
+      
+      // HQエクスポート用のフレーム収集を開始
+      if (canvasRef.current) {
+        capturedFramesRef.current = [];
+        const ctx = canvasRef.current.getContext('2d');
+        const w = canvasRef.current.width;
+        const h = canvasRef.current.height;
+        if (ctx && w && h) {
+          const intervalMs = Math.max(10, Math.round(1000 / captureFps));
+          captureIntervalRef.current = setInterval(() => {
+            try {
+              const imageData = ctx.getImageData(0, 0, w, h);
+              const ts = performance.now();
+              capturedFramesRef.current.push({
+                imageData,
+                timestamp: ts,
+                sourceTime: ts / 1000,
+                index: capturedFramesRef.current.length,
+                metadata: { processingTime: 0, captureTime: ts, quality: 1 }
+              });
+            } catch {}
+          }, intervalMs);
+        }
+      }
+      
+      // 自動停止は行わない（ユーザー操作で停止）
 
     } catch (error) {
-      console.error('[startRecording] 録画開始処理全体でエラーが発生しました:', error);
-       alert('録画の開始に失敗しました。カメラへのアクセス許可やブラウザの互換性を確認してください。');
-       console.log('[startRecording] isRecording を false に設定 (catchブロック)');
-       setIsRecording(false); // エラー時も状態をリセット
+      console.error('[startRecording] エラー:', error);
+      setIsRecording(false);
+      alert(`録画中にエラーが発生しました: ${error}`);
     }
-    console.log('[startRecording] 終了');
-  }, [isRecording, originalFrameRate]);
+  }, [canvasRef, isRecording, recordedChunks]);
 
   // 動画分析の開始処理
   const startVideoAnalysis = useCallback(() => {
@@ -746,11 +921,17 @@ const SimpleMotionAnalyzer: React.FC = () => {
           isProcessingFrame = false;
           setIsVideoAnalyzing(false);
           
-          // 録画を開始
+          // 自動ダウンロードを有効化
+          shouldAutoDownloadRef.current = true;
+          console.log('自動ダウンロードを有効化しました');
+
+          // 録画開始 - 依存関係問題を回避するために直接呼び出さない
           setTimeout(() => {
             if (uploadedVideoRef.current) {
               uploadedVideoRef.current.currentTime = 0;
-              startRecording();
+              console.log('録画準備完了 - 録画開始ボタンをクリックしてください');
+              // ユーザーに録画ボタンをクリックするように指示
+              alert('分析が完了しました。「録画開始」ボタンをクリックして録画を開始してください。');
             }
           }, 500);
           
@@ -811,484 +992,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
         }
       };
     }
-  }, [isVideoReady, isVideoAnalyzing, startRecording]);
-  
-  // 動画分析の停止
-  const stopVideoAnalysis = useCallback(() => {
-    console.log('動画分析を停止します');
-    
-    // アニメーションフレームをキャンセル
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
-    
-    // インターバルタイマーをクリア
-    if (videoProcessingIntervalIdRef.current) {
-      clearInterval(videoProcessingIntervalIdRef.current);
-      videoProcessingIntervalIdRef.current = undefined;
-    }
-    
-    // 動画を停止
-    if (uploadedVideoRef.current) {
-      uploadedVideoRef.current.pause();
-    }
-    
-    setIsVideoAnalyzing(false);
-    console.log('動画分析を停止しました');
-  }, []);
-
-  // 統計情報のリセット処理
-  const resetStats = useCallback(() => {
-    setStats({
-      framesProcessed: 0,
-      fps: 0,
-      elapsedTime: 0,
-      progress: 0,
-      estimatedTimeRemaining: 0
-    });
-  }, []);
-
-  // 動画処理の進捗更新
-  const updateProcessingProgress = useCallback((updates: Partial<ProcessingProgress>) => {
-    setProcessingProgress(prev => ({
-      ...prev,
-      ...updates
-    }));
-  }, []);
-
-  // フレーム処理の実行
-  const processVideoFrame = useCallback(async (
-    videoElement: HTMLVideoElement,
-    canvas: HTMLCanvasElement,
-    ctx: CanvasRenderingContext2D,
-    holistic: Holistic,
-    onProgress: (progress: number) => void
-  ): Promise<boolean> => {
-    try {
-      // フレームをキャンバスに描画
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-
-      // MediaPipe Holisticで解析
-      await holistic.send({image: canvas});
-
-      return true;
-    } catch (error) {
-      console.error('フレーム処理エラー:', error);
-      return false;
-    }
-  }, []);
-
-  // メインの処理ループ
-  const processVideo = useCallback(async () => {
-    if (!uploadedVideoRef.current || !canvasRef.current || !holisticRef.current) {
-      console.error('必要なリソースが見つかりません');
-      setProcessingStatus('error');
-      return;
-    }
-
-    const videoElement = uploadedVideoRef.current;
-    const canvas = canvasRef.current;
-    const holistic = holisticRef.current;
-    const ctx = canvas.getContext('2d');
-    
-    if (!ctx) {
-      console.error('キャンバスコンテキストを取得できません');
-      setProcessingStatus('error');
-      return;
-    }
-
-    // 処理状態の初期化
-    const processor = frameProcessorRef.current;
-    processor.isProcessing = true;
-    processor.shouldStop = false;
-    processor.currentTime = 0;
-    processor.processedFrames = 0;
-    processor.startTime = performance.now();
-    processor.lastUpdateTime = performance.now();
-
-    // 動画の情報を取得
-    const duration = videoElement.duration;
-    const frameStep = 1 / 30; // 30fps
-    const totalFrames = Math.ceil(duration / frameStep);
-    const chunkSize = 1; // 1秒ごとにチャンク処理
-
-    // 進捗情報を初期化
-    updateProcessingProgress({
-      status: 'processing',
-      progress: 0,
-      currentFrame: 0,
-      totalFrames,
-      fps: 0,
-      elapsedTime: 0,
-      estimatedTimeRemaining: duration
-    });
-
-    // 最初のフレームに移動
-    videoElement.currentTime = 0;
-
-    // チャンク単位で処理を実行
-    const processChunk = async (startTime: number, endTime: number): Promise<void> => {
-      if (processor.shouldStop) {
-        return;
-      }
-
-      try {
-        // チャンク内のフレームを処理
-        let currentTime = startTime;
-        while (currentTime < endTime && !processor.shouldStop) {
-          // フレームの描画と解析
-          videoElement.currentTime = currentTime;
-          
-          // シーク完了を待機
-          await new Promise<void>(resolve => {
-            const checkSeek = () => {
-              if (Math.abs(videoElement.currentTime - currentTime) < 0.01) {
-                resolve();
-              } else {
-                requestAnimationFrame(checkSeek);
-              }
-            };
-            checkSeek();
-          });
-
-          // フレーム処理
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-          
-          try {
-            await holistic.send({image: canvas});
-          } catch (e) {
-            console.warn('Holistic処理エラー:', e);
-          }
-
-          processor.processedFrames++;
-          processor.currentTime = currentTime;
-
-          // 進捗更新
-          const now = performance.now();
-          if (now - processor.lastUpdateTime > 200) {
-            const elapsedTime = (now - processor.startTime) / 1000;
-            const progress = (currentTime / duration) * 100;
-            const currentFps = processor.processedFrames / elapsedTime;
-            const estimatedTimeRemaining = progress > 0
-              ? (elapsedTime * (100 - progress)) / progress
-              : duration;
-
-            updateProcessingProgress({
-              progress: Math.round(progress),
-              currentFrame: processor.processedFrames,
-              fps: Math.round(currentFps),
-              elapsedTime: Math.round(elapsedTime),
-              estimatedTimeRemaining: Math.round(estimatedTimeRemaining)
-            });
-
-            processor.lastUpdateTime = now;
-          }
-
-          currentTime += frameStep;
-          
-          // UIの更新のために少し待機
-          await new Promise(resolve => setTimeout(resolve, 0));
-        }
-      } catch (error) {
-        console.error('チャンク処理エラー:', error);
-      }
-    };
-
-    try {
-      // 動画を複数のチャンクに分割して処理
-      for (let time = 0; time < duration && !processor.shouldStop; time += chunkSize) {
-        const endTime = Math.min(time + chunkSize, duration);
-        await processChunk(time, endTime);
-        
-        // チャンク間で少し待機してUIの更新を許可
-        await new Promise(resolve => setTimeout(resolve, 10));
-      }
-
-      // 処理完了
-      if (!processor.shouldStop) {
-        setProcessingStatus('completed');
-        updateProcessingProgress({
-          status: 'completed',
-          progress: 100
-        });
-
-        // 録画開始
-        setTimeout(() => {
-          if (uploadedVideoRef.current) {
-            uploadedVideoRef.current.currentTime = 0;
-            startRecording();
-          }
-        }, 500);
-      }
-    } catch (error) {
-      console.error('動画処理エラー:', error);
-      setProcessingStatus('error');
-      updateProcessingProgress({
-        status: 'error',
-        error: error instanceof Error ? error.message : '不明なエラーが発生しました'
-      });
-    } finally {
-      processor.isProcessing = false;
-    }
-  }, [updateProcessingProgress, startRecording]);
-
-  // 動画アップロード処理
-  const handleVideoUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
-
-    const file = files[0];
-    
-    // ファイルサイズチェック（例: 500MB）
-    const maxSize = 500 * 1024 * 1024;
-    if (file.size > maxSize) {
-      alert('ファイルサイズが大きすぎます（最大500MB）');
-      return;
-    }
-
-    // 対応フォーマットチェック
-    const supportedFormats = ['video/mp4', 'video/webm', 'video/quicktime'];
-    if (!supportedFormats.includes(file.type)) {
-      alert('対応していないファイル形式です（MP4, WebM, MOVに対応）');
-      return;
-    }
-
-    try {
-      // 処理状態をリセット
-      setProcessingStatus('loading');
-      updateProcessingProgress({
-        status: 'loading',
-        progress: 0,
-        currentFrame: 0,
-        totalFrames: 0,
-        fps: 0,
-        elapsedTime: 0,
-        estimatedTimeRemaining: 0
-      });
-
-      // 既存のリソースをクリーンアップ
-      if (isVideoAnalyzing) {
-        stopVideoAnalysis();
-      }
-      if (isRecording) {
-        stopRecording();
-      }
-      if (uploadedVideoUrl) {
-        URL.revokeObjectURL(uploadedVideoUrl);
-      }
-      if (outputVideoUrl) {
-        URL.revokeObjectURL(outputVideoUrl);
-        setOutputVideoUrl(null);
-      }
-
-      // 新しいビデオURLを作成
-      const url = URL.createObjectURL(file);
-      setUploadedVideoUrl(url);
-      setUploadedVideo(file);
-
-      // ビデオの読み込みと初期化
-      if (uploadedVideoRef.current) {
-        const videoElement = uploadedVideoRef.current;
-        
-        // メタデータ読み込み完了を待つ
-        await new Promise<void>((resolve, reject) => {
-          videoElement.onloadedmetadata = () => resolve();
-          videoElement.onerror = () => reject(new Error('ビデオの読み込みに失敗しました'));
-          videoElement.src = url;
-        });
-
-        // キャンバスの設定
-        if (canvasRef.current) {
-          canvasRef.current.width = videoElement.videoWidth;
-          canvasRef.current.height = videoElement.videoHeight;
-        }
-
-        // Holisticの初期化
-        await initHolistic();
-
-        // 処理開始
-        setIsVideoReady(true);
-        setIsVideoAnalyzing(true);
-        processVideo().catch(error => {
-          console.error('動画処理エラー:', error);
-          setProcessingStatus('error');
-          updateProcessingProgress({
-            status: 'error',
-            error: error instanceof Error ? error.message : '不明なエラーが発生しました'
-          });
-        });
-      }
-    } catch (error) {
-      console.error('動画アップロードエラー:', error);
-      setProcessingStatus('error');
-      updateProcessingProgress({
-        status: 'error',
-        error: '動画の準備中にエラーが発生しました'
-      });
-    }
-  }, [isVideoAnalyzing, isRecording, stopVideoAnalysis, stopRecording, initHolistic, processVideo, updateProcessingProgress]);
-
-  // 処理の停止
-  const stopProcessing = useCallback(() => {
-    const processor = frameProcessorRef.current;
-    if (processor.isProcessing) {
-      processor.shouldStop = true;
-      setProcessingStatus('idle');
-      updateProcessingProgress({
-        status: 'idle',
-        progress: 0
-      });
-    }
-  }, [updateProcessingProgress]);
-
-  // 分析モードの切り替えを修正
-  const switchMode = useCallback((mode: AnalysisMode) => {
-    // 現在の処理を停止
-    if (analysisMode === 'camera') {
-      if (isRecording) {
-        stopRecording();
-      }
-      if (cameraRef.current) {
-        cameraRef.current.stop();
-      }
-    } else if (analysisMode === 'video') {
-      if (isVideoAnalyzing) {
-        stopVideoAnalysis();
-      }
-    }
-    
-    // モード切り替え
-    setAnalysisMode(mode);
-    
-    // 必要に応じてリソースをクリーンアップ
-    if (holisticRef.current) {
-      try {
-        holisticRef.current.close();
-      } catch (e) {
-        console.error("Holistic終了エラー:", e);
-      }
-      holisticRef.current = null;
-      setIsInitialized(false);
-    }
-    
-    // 統計リセット
-    frameCountRef.current = 0;
-    startTimeRef.current = 0;
-    videoAnalysisStartTimeRef.current = 0;
-    videoAnalysisFrameCountRef.current = 0;
-    resetStats();
-  }, [analysisMode, isRecording, stopRecording, isVideoAnalyzing, stopVideoAnalysis]);
-
-  // 現在のビューを録画してダウンロードする簡易機能
-  const captureCurrentView = useCallback(() => {
-    if (!canvasRef.current) {
-      console.error('キャンバスが見つかりません');
-      return;
-    }
-    
-    console.log('現在のビュー録画開始');
-    
-    // 既存の録画をクリア
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-    }
-    
-    setRecordedChunks([]);
-    setOutputVideoUrl(null);
-    
-    try {
-      // キャンバスからストリームを取得する
-      const stream = canvasRef.current.captureStream(30); // 30fpsで録画
-      
-      if (!stream || stream.getVideoTracks().length === 0) {
-        console.error('ストリームまたはビデオトラックの取得に失敗');
-        return;
-      }
-      
-      console.log(`取得したストリーム: トラック数=${stream.getTracks().length}`);
-      
-      // コーデックの対応確認
-      let options = {};
-      const supportedTypes = [
-        'video/webm;codecs=vp9',
-        'video/webm;codecs=vp8',
-        'video/webm'
-      ];
-      
-      for (const type of supportedTypes) {
-        if (MediaRecorder.isTypeSupported(type)) {
-          options = {
-            mimeType: type,
-            videoBitsPerSecond: 5000000
-          };
-          console.log(`${type}コーデック利用`);
-          break;
-        }
-      }
-      
-      // MediaRecorderインスタンスの作成
-      console.log('MediaRecorder作成', options);
-      const mediaRecorder = new MediaRecorder(stream, options);
-      const chunks: Blob[] = [];
-      
-      // データ取得イベントハンドラ
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) {
-          console.log(`データチャンクサイズ: ${e.data.size} バイト`);
-          chunks.push(e.data);
-          setRecordedChunks(current => [...current, e.data]);
-        }
-      };
-      
-      // 録画停止イベントハンドラ
-      mediaRecorder.onstop = () => {
-        console.log(`録画終了、録画チャンク数: ${chunks.length}`);
-        
-        if (chunks.length === 0) {
-          console.error('録画データがありません');
-          return;
-        }
-        
-        // Blobの作成
-        const mimeType = mediaRecorder.mimeType || 'video/webm';
-        console.log(`Blob作成: MIMEタイプ=${mimeType}`);
-        const blob = new Blob(chunks, { type: mimeType });
-        
-        console.log(`最終Blobサイズ: ${blob.size} バイト、タイプ: ${blob.type}`);
-        
-        if (blob.size > 0) {
-          const url = URL.createObjectURL(blob);
-          console.log('Blob URL作成:', url);
-          setOutputVideoUrl(url);
-          
-          // 自動ダウンロード
-          setTimeout(() => {
-            downloadVideo();
-          }, 500);
-        } else {
-          console.error('Blobのサイズが0です');
-        }
-      };
-      
-      // 録画開始
-      mediaRecorderRef.current = mediaRecorder;
-      mediaRecorder.start(100); // 100msごとにデータを取得
-      
-      // 3秒間録画して自動停止
-      setTimeout(() => {
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-          console.log('録画自動停止（3秒）');
-          mediaRecorderRef.current.stop();
-        }
-      }, 3000);
-      
-    } catch (error) {
-      console.error('録画の開始に失敗しました:', error);
-    }
-  }, [downloadVideo]);
+  }, [isVideoReady, isVideoAnalyzing]);
 
   // ランドマーク付きのキャンバスを画像としてダウンロードする関数
   const captureAndDownloadCanvas = useCallback(() => {
@@ -1389,8 +1093,8 @@ const SimpleMotionAnalyzer: React.FC = () => {
             requestAnimationFrame(processFrame);
           } else if (videoElement.ended) {
             // 動画が終了したら録画を停止
-            if (mediaRecorder.state !== 'inactive') {
-              mediaRecorder.stop();
+            if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+              mediaRecorderRef.current.stop();
             }
           }
         } catch (e) {
@@ -1398,6 +1102,9 @@ const SimpleMotionAnalyzer: React.FC = () => {
           requestAnimationFrame(processFrame);
         }
       };
+      
+      // mediaRecorderRef に現在のレコーダーを保存
+      mediaRecorderRef.current = mediaRecorder;
       
       // 録画を開始
       mediaRecorder.start(100); // 100msごとにデータを収集
@@ -1447,225 +1154,665 @@ const SimpleMotionAnalyzer: React.FC = () => {
     return cleanup;
   }, [cleanup]);
 
+  // 出力URLが設定されたらダウンロードを試行
+  useEffect(() => {
+    if (outputVideoUrl && shouldAutoDownloadRef.current) {
+      console.log('outputVideoUrlが設定されました。ダウンロードを試行します:', outputVideoUrl);
+      
+      // タイムアウトを設定して、ダウンロードを試行
+      const downloadTimer = setTimeout(() => {
+        console.log('タイマーによるダウンロード開始');
+        
+        // 直接aタグを作成してダウンロード
+        const a = document.createElement('a');
+        a.href = outputVideoUrl;
+        a.download = `motion-analysis-${new Date().toISOString().replace(/:/g, '-')}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        
+        console.log('ダウンロードリンクをクリックしました');
+      }, 1500);
+      
+      return () => clearTimeout(downloadTimer);
+    }
+  }, [outputVideoUrl, downloadVideo, analysisMode]);
+
+  // 統計情報のリセット処理
+  const resetStats = useCallback(() => {
+    setStats({
+      framesProcessed: 0,
+      fps: 0,
+      elapsedTime: 0,
+      progress: 0,
+      estimatedTimeRemaining: 0
+    });
+  }, []);
+
+  
+
+  // 動画分析の停止
+  const stopVideoAnalysis = useCallback(() => {
+    console.log('動画分析を停止します');
+    
+    // アニメーションフレームをキャンセル
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    
+    // インターバルタイマーをクリア
+    if (videoProcessingIntervalIdRef.current) {
+      clearInterval(videoProcessingIntervalIdRef.current);
+      videoProcessingIntervalIdRef.current = undefined;
+    }
+    
+    // 動画を停止
+    if (uploadedVideoRef.current) {
+      uploadedVideoRef.current.pause();
+    }
+    
+    setIsVideoAnalyzing(false);
+    console.log('動画分析を停止しました');
+  }, []);
+
+  // メインの処理ループ
+  const processVideo = useCallback(async () => {
+    if (!uploadedVideoRef.current || !canvasRef.current || !holisticRef.current) {
+      console.error('必要なリソースが見つかりません');
+      setProcessingStatus('error');
+      return;
+    }
+
+    const videoElement = uploadedVideoRef.current;
+    const canvas = canvasRef.current;
+    const holistic = holisticRef.current;
+    const ctx = canvas.getContext('2d');
+    
+    if (!ctx) {
+      console.error('キャンバスコンテキストを取得できません');
+      setProcessingStatus('error');
+      return;
+    }
+
+    // 処理状態の初期化
+    const processor = frameProcessorRef.current;
+    processor.isProcessing = true;
+    processor.shouldStop = false;
+    processor.currentTime = 0;
+    processor.processedFrames = 0;
+    processor.startTime = performance.now();
+    processor.lastUpdateTime = performance.now();
+
+    // 処理完了したら表示モードに切り替え
+      if (!processor.shouldStop) {
+        setProcessingStatus('completed');
+        updateProcessingProgress({
+          status: 'completed',
+          progress: 100
+        });
+
+      // 自動ダウンロードを有効化
+      shouldAutoDownloadRef.current = true;
+      console.log('自動ダウンロードを有効化しました');
+
+      // 録画開始を促す - 循環依存を避けるために直接呼び出さない
+        setTimeout(() => {
+          if (uploadedVideoRef.current) {
+            uploadedVideoRef.current.currentTime = 0;
+          console.log('録画準備完了 - 録画開始ボタンをクリックしてください');
+          alert('分析が完了しました。「録画開始」ボタンをクリックして録画を開始してください。');
+          }
+        }, 500);
+      }
+  }, [updateProcessingProgress]);
+
+  // 動画アップロード処理
+  const handleVideoUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    const file = files[0];
+    
+    // ファイルサイズチェック（例: 500MB）
+    const maxSize = 500 * 1024 * 1024;
+    if (file.size > maxSize) {
+      alert('ファイルサイズが大きすぎます（最大500MB）');
+      return;
+    }
+
+    // 対応フォーマットチェック
+    const supportedFormats = ['video/mp4', 'video/webm', 'video/quicktime'];
+    if (!supportedFormats.includes(file.type)) {
+      alert('対応していないファイル形式です（MP4, WebM, MOVに対応）');
+      return;
+    }
+
+    try {
+      // 処理状態をリセット
+      setProcessingStatus('loading');
+      updateProcessingProgress({
+        status: 'loading',
+        progress: 0,
+        currentFrame: 0,
+        totalFrames: 0,
+        fps: 0,
+        elapsedTime: 0,
+        estimatedTimeRemaining: 0
+      });
+
+      // 既存のリソースをクリーンアップ
+      if (isVideoAnalyzing) {
+        stopVideoAnalysis();
+      }
+      if (isRecording) {
+        stopRecording();
+      }
+      if (uploadedVideoUrl) {
+        URL.revokeObjectURL(uploadedVideoUrl);
+      }
+      if (outputVideoUrl) {
+        URL.revokeObjectURL(outputVideoUrl);
+        setOutputVideoUrl(null);
+      }
+      
+      // 自動ダウンロードフラグをリセット
+      shouldAutoDownloadRef.current = false;
+
+      // 新しいビデオURLを作成
+      const url = URL.createObjectURL(file);
+      setUploadedVideoUrl(url);
+      setUploadedVideo(file);
+
+      // ビデオの読み込みと初期化
+      if (uploadedVideoRef.current) {
+        const videoElement = uploadedVideoRef.current;
+        
+        // メタデータ読み込み完了を待つ
+        await new Promise<void>((resolve, reject) => {
+          videoElement.onloadedmetadata = () => resolve();
+          videoElement.onerror = () => reject(new Error('ビデオの読み込みに失敗しました'));
+          videoElement.src = url;
+        });
+
+        // キャンバスの設定
+        if (canvasRef.current) {
+          canvasRef.current.width = videoElement.videoWidth;
+          canvasRef.current.height = videoElement.videoHeight;
+        }
+
+        // Holisticの初期化
+        await initHolistic();
+
+        // 処理開始
+        setIsVideoReady(true);
+        setIsVideoAnalyzing(true);
+        startRenderLoop();
+        processVideo(); // startVideoAnalysisの代わりにprocessVideoを使用
+      }
+    } catch (error) {
+      console.error('動画アップロードエラー:', error);
+      setProcessingStatus('error');
+      updateProcessingProgress({
+        status: 'error',
+        error: '動画の準備中にエラーが発生しました'
+      });
+    }
+  }, [isVideoAnalyzing, isRecording, stopVideoAnalysis, stopRecording, initHolistic, updateProcessingProgress, processVideo]);
+
+  // 分析モードの切り替えを修正
+  const switchMode = useCallback((mode: AnalysisMode) => {
+    // 現在の処理を停止
+    if (analysisMode === 'camera') {
+      if (isRecording) {
+        stopRecording();
+      }
+      if (cameraRef.current) {
+        cameraRef.current.stop();
+      }
+      stopRenderLoop();
+    } else if (analysisMode === 'video') {
+      if (isVideoAnalyzing) {
+        stopVideoAnalysis();
+      }
+      stopRenderLoop();
+    }
+    
+    // モード切り替え
+    setAnalysisMode(mode);
+    
+    // 必要に応じてリソースをクリーンアップ
+    if (holisticRef.current) {
+      try {
+        holisticRef.current.close();
+      } catch (e) {
+        console.error("Holistic終了エラー:", e);
+      }
+      holisticRef.current = null;
+      setIsInitialized(false);
+    }
+    
+    // 統計リセット
+    frameCountRef.current = 0;
+    startTimeRef.current = 0;
+    videoAnalysisStartTimeRef.current = 0;
+    videoAnalysisFrameCountRef.current = 0;
+    resetStats();
+  }, [analysisMode, isRecording, stopRecording, isVideoAnalyzing, stopVideoAnalysis, resetStats]);
+
   return (
-    <div className="flex flex-col items-center w-full max-w-4xl mx-auto p-4">
-      {/* タブ切り替え */}
-      <div className="flex space-x-2 mb-4">
-        <button
-          onClick={() => switchMode('camera')}
-          className={`px-4 py-2 rounded ${analysisMode === 'camera' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
-        >
-          カメラで分析
-        </button>
-        <button
-          onClick={() => switchMode('video')}
-          className={`px-4 py-2 rounded ${analysisMode === 'video' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
-        >
-          動画をアップロード
-        </button>
+    <div className="w-full">
+      <Card className="shadow-lg bg-white dark:bg-gray-850 border-gray-200 dark:border-gray-800 overflow-hidden">
+        <CardHeader className="border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900">
+          <CardTitle className="text-xl font-bold text-gray-900 dark:text-gray-100 flex items-center">
+            <Film className="mr-2 h-5 w-5 text-primary" /> 
+            モーション分析ツール
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <Tabs defaultValue={analysisMode} onValueChange={(value: string) => setAnalysisMode(value as AnalysisMode)} className="w-full">
+            <div className="px-4 pt-4 border-b border-gray-200 dark:border-gray-800">
+              <TabsList className="bg-gray-100 dark:bg-gray-800 grid w-full grid-cols-2 h-10 rounded-md">
+                <TabsTrigger 
+                  value="camera" 
+                  className="rounded-sm data-[state=active]:bg-white dark:data-[state=active]:bg-gray-700 flex items-center justify-center"
+                >
+                  <CameraIcon className="mr-2 h-4 w-4" />
+                  カメラモード
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="video" 
+                  className="rounded-sm data-[state=active]:bg-white dark:data-[state=active]:bg-gray-700 flex items-center justify-center"
+                >
+                  <Video className="mr-2 h-4 w-4" />
+                  ビデオモード
+                </TabsTrigger>
+              </TabsList>
+            </div>
+
+            <TabsContent value="camera" className="p-4 space-y-4">
+              <div className="bg-gray-50 dark:bg-gray-900 rounded-md p-4 border border-gray-200 dark:border-gray-800">
+                <div className="flex flex-col sm:flex-row justify-between items-center space-y-4 sm:space-y-0 sm:space-x-4">
+                  <div className="flex-1">
+                    <h3 className="text-base font-medium text-gray-900 dark:text-gray-100">カメラによる動作分析</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      カメラを起動して、リアルタイムで動作分析を行います
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button 
+                            size="sm"
+                            variant={isInitialized ? "destructive" : "default"}
+                            onClick={() => {
+                              if (!isInitialized) {
+                                // カメラを起動
+                                initCamera().then(() => {
+                                  setIsInitialized(true);
+                                }).catch((err) => {
+                                  console.error('カメラ起動エラー:', err);
+                                  alert('カメラの起動に失敗しました。権限を確認してください。');
+                                });
+        } else {
+                                // カメラを停止
+                                if (cameraRef.current) {
+                                  cameraRef.current.stop();
+                                  cameraRef.current = null;
+                                }
+                                if (videoStream) {
+                                  videoStream.getTracks().forEach(track => track.stop());
+                                  setVideoStream(null);
+                                }
+            if (holisticRef.current) {
+                                  holisticRef.current.close();
+                                  holisticRef.current = null;
+                                }
+                                setIsInitialized(false);
+                                resetStats();
+                              }
+                            }}
+                            className="min-w-[120px]"
+                            disabled={isLoading}
+                          >
+                            {isInitialized ? '停止' : 'カメラ起動'}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>カメラを起動または停止します</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button 
+                            size="sm"
+                            variant="outline"
+                            onClick={isRecording ? stopRecording : startRecording}
+                            className="min-w-[120px]"
+                            disabled={!isInitialized || isLoading}
+                          >
+                            {isRecording ? (
+                              <>
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                録画中...
+                              </>
+                            ) : (
+                              <>録画</>
+                            )}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>カメラ映像を録画します</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                </div>
       </div>
       
-      {/* カメラモード */}
-      {analysisMode === 'camera' && (
-        <div className="flex flex-col items-center w-full">
-          <div className="relative w-full aspect-video bg-black mb-4">
+              <div className="relative aspect-video bg-black rounded-md overflow-hidden">
+                {isLoading && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-gray-900/50 z-10">
+                    <Loader2 className="h-8 w-8 animate-spin text-white" />
+                  </div>
+                )}
+                
+                <div className="relative w-full h-full">
             <video
               ref={videoRef}
-              className="absolute inset-0 w-full h-full object-contain opacity-0"
+                    className="w-full h-full object-contain"
               playsInline
+              autoPlay
               muted
             />
             <canvas
               ref={canvasRef}
-              className="absolute inset-0 w-full h-full object-contain"
+                    className="absolute top-0 left-0 w-full h-full z-10" 
             />
-            {isLoading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white">
-                読み込み中...
               </div>
-            )}
           </div>
           
-          <div className="flex flex-wrap gap-2 mb-4">
-            <button
-              onClick={initCamera}
-              disabled={isLoading}
-              className="px-4 py-2 bg-green-500 text-white rounded disabled:bg-gray-400"
-            >
-              カメラ接続
-            </button>
-            <button
-              onClick={startRecording}
-              disabled={!isInitialized || isRecording || isLoading}
-              className="px-4 py-2 bg-red-500 text-white rounded disabled:bg-gray-400"
-            >
-              録画開始 {isInitialized ? '✓' : ''}
-            </button>
-            <button
-              onClick={stopRecording}
-              disabled={!isRecording}
-              className="px-4 py-2 bg-gray-500 text-white rounded disabled:bg-gray-400"
-            >
-              録画停止
-            </button>
-            <button
+              {processingStatus !== 'idle' && (
+                <div className="mt-4 bg-gray-50 dark:bg-gray-900 rounded-md p-4 border border-gray-200 dark:border-gray-800">
+                  <div className="flex flex-col space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">処理状況</span>
+                      <span className="text-sm text-gray-600 dark:text-gray-400">
+                        {processingProgress.progress.toFixed(0)}%
+                      </span>
+                    </div>
+                    <Progress value={processingProgress.progress} className="h-2" />
+                    <div className="grid grid-cols-2 gap-4 mt-2">
+                      <div className="text-xs text-gray-600 dark:text-gray-400">
+                        FPS: {processingProgress.fps.toFixed(1)}
+                      </div>
+                      <div className="text-xs text-gray-600 dark:text-gray-400 text-right">
+                        残り時間: {processingProgress.estimatedTimeRemaining > 0 
+                          ? `${Math.round(processingProgress.estimatedTimeRemaining)}秒` 
+                          : '計算中...'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {outputVideoUrl && (
+                <div className="mt-4 bg-gray-50 dark:bg-gray-900 rounded-md p-4 border border-gray-200 dark:border-gray-800">
+                  <div className="flex flex-col sm:flex-row justify-between items-center space-y-4 sm:space-y-0">
+                    <div className="flex-1">
+                      <h3 className="text-base font-medium text-gray-900 dark:text-gray-100">録画結果</h3>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">
+                        保存またはプレビューが可能です
+                      </p>
+                    </div>
+                    <Button 
+                      size="sm"
+                      variant="default"
               onClick={downloadVideo}
-              disabled={!outputVideoUrl}
-              className="px-4 py-2 bg-blue-500 text-white rounded disabled:bg-gray-400"
+                      className="min-w-[120px]"
             >
+                      <Download className="mr-2 h-4 w-4" />
               ダウンロード
-            </button>
+                    </Button>
           </div>
-          
-          <div className="w-full p-4 bg-gray-100 rounded">
-            <h3 className="font-bold mb-2">処理情報</h3>
-            <p>処理フレーム数: {stats.framesProcessed}</p>
-            <p>現在のFPS: {stats.fps}</p>
-            <p>経過時間: {stats.elapsedTime}秒</p>
-            <p>元の動画フレームレート: {originalFrameRate}</p>
-            <p>カメラ準備完了: {isInitialized ? 'はい' : 'いいえ'}</p>
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="video" className="p-4 space-y-4">
+              <div className="bg-gray-50 dark:bg-gray-900 rounded-md p-4 border border-gray-200 dark:border-gray-800">
+                <div className="flex flex-col sm:flex-row justify-between items-center space-y-4 sm:space-y-0 sm:space-x-4">
+                  <div className="flex-1">
+                    <h3 className="text-base font-medium text-gray-900 dark:text-gray-100">ビデオによる動作分析</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      動画ファイルをアップロードして分析を行います
+                    </p>
           </div>
+                  <div className="flex">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="relative min-w-[120px]"
+                      disabled={isVideoAnalyzing}
+                    >
+                      <input
+                        type="file"
+                        accept="video/*"
+                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                        onChange={handleVideoUpload}
+                      />
+                      <Upload className="mr-2 h-4 w-4" />
+                      ビデオ選択
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="relative aspect-video bg-black rounded-md overflow-hidden">
+                {isVideoAnalyzing && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-gray-900/50 z-10">
+                    <Loader2 className="h-8 w-8 animate-spin text-white" />
         </div>
       )}
       
-      {/* 動画アップロードモード */}
-      {analysisMode === 'video' && (
-        <div className="flex flex-col items-center w-full">
-          <div className="relative w-full aspect-video bg-black mb-4">
+                <div className="relative w-full h-full">
             <video
               ref={uploadedVideoRef}
-              className="absolute inset-0 w-full h-full object-contain"
+                    className="w-full h-full object-contain"
               playsInline
-              muted
+                    controls
             />
             <canvas
               ref={canvasRef}
-              className="absolute inset-0 w-full h-full object-contain z-10"
-            />
-            {!uploadedVideoUrl && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black text-white z-20">
-                動画をアップロードしてください
+                    className="absolute top-0 left-0 w-full h-full z-10" 
+                  />
+                </div>
+
+                {!uploadedVideoUrl && !isVideoAnalyzing && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
+                    <Upload className="h-12 w-12 mb-4 opacity-50" />
+                    <p className="text-lg font-medium opacity-70">ビデオをアップロードしてください</p>
+                    <p className="text-sm opacity-50 mt-2">MP4, WebM, MOVなどの形式に対応</p>
               </div>
             )}
-            {uploadedVideoUrl && !isVideoReady && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white z-20">
-                <div className="flex flex-col items-center">
-                  <Loader2 className="animate-spin mb-2" />
-                  <span>動画を準備中...</span>
+                </div>
+
+              {processingStatus !== 'idle' && (
+                <div className="mt-4 bg-gray-50 dark:bg-gray-900 rounded-md p-4 border border-gray-200 dark:border-gray-800">
+                  <div className="flex flex-col space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">処理状況</span>
+                      <span className="text-sm text-gray-600 dark:text-gray-400">
+                        {processingProgress.progress.toFixed(0)}%
+                      </span>
+              </div>
+                    <Progress value={processingProgress.progress} className="h-2" />
+                    <div className="grid grid-cols-2 gap-4 mt-2">
+                      <div className="text-xs text-gray-600 dark:text-gray-400">
+                        フレーム: {processingProgress.currentFrame} / {processingProgress.totalFrames}
+                </div>
+                      <div className="text-xs text-gray-600 dark:text-gray-400 text-right">
+                        残り時間: {processingProgress.estimatedTimeRemaining > 0 
+                          ? `${Math.round(processingProgress.estimatedTimeRemaining)}秒` 
+                          : '計算中...'}
                 </div>
               </div>
-            )}
-            {isVideoAnalyzing && (
-              <div className="absolute top-0 left-0 right-0 flex items-center justify-between bg-blue-500 bg-opacity-90 text-white px-4 py-2 z-20">
-                <div className="flex items-center">
-                  <Loader2 className="animate-spin mr-2" />
-                  <span>分析中... {stats.progress}%</span>
-                </div>
-                <div>
-                  処理フレーム: {stats.framesProcessed}
-                </div>
-              </div>
-            )}
-            
-            {/* 進行状況バー */}
-            {isVideoAnalyzing && (
-              <div className="absolute bottom-0 left-0 w-full h-2 bg-gray-700 z-20">
-                <div 
-                  className="h-full bg-green-500 transition-all duration-300" 
-                  style={{ width: `${stats.progress}%` }}
-                />
+                  </div>
+
+                  {processingStatus === 'completed' && (
+                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">処理が完了しました</span>
+                        <Button 
+                          size="sm"
+                          variant="default"
+                          onClick={downloadVideo}
+                          className="min-w-[120px]"
+                        >
+                          <Download className="mr-2 h-4 w-4" />
+                          ダウンロード
+                        </Button>
+                      </div>
               </div>
             )}
           </div>
-          
-          {/* アップロードボタン群 */}
-          <div className="flex flex-wrap gap-2 mb-4 justify-center">
-            <label className={`
-              px-4 py-2 rounded cursor-pointer
-              ${isVideoAnalyzing ? 'bg-gray-500' : 'bg-green-500 hover:bg-green-600'}
-              text-white transition-colors duration-200
-            `}>
-              {isVideoAnalyzing ? '処理中...' : '動画を選択（自動処理）'}
-              <input
-                type="file"
-                accept="video/*"
-                onChange={handleVideoUpload}
-                className="hidden"
-                disabled={isVideoAnalyzing}
-              />
-            </label>
-            
-            {/* ランドマーク付き動画を直接ダウンロード */}
-            <div className="flex items-center gap-2">
-              <button
-                onClick={captureAndDownloadVideo}
-                disabled={!isVideoReady}
-                className={`
-                  px-4 py-2 rounded 
-                  ${!isVideoReady ? 'bg-gray-400' : 'bg-green-500 hover:bg-green-600'} 
-                  text-white transition-colors duration-200
-                `}
-              >
-                ランドマーク付き動画をダウンロード
-              </button>
-              <span className="text-sm text-gray-600">
-                ※動画の再生が1度完了してから押してください
-              </span>
+              )}
+              
+              {/* ビデオモードでも録画結果を表示 */}
+              {outputVideoUrl && (
+                <div className="mt-4 bg-gray-50 dark:bg-gray-900 rounded-md p-4 border border-gray-200 dark:border-gray-800">
+                  <div className="flex flex-col sm:flex-row justify-between items-center space-y-4 sm:space-y-0">
+                    <div className="flex-1">
+                      <h3 className="text-base font-medium text-gray-900 dark:text-gray-100">録画結果</h3>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">
+                        ランドマーク付き動画をダウンロードできます
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button 
+                        size="sm"
+                        variant="default"
+                        onClick={downloadVideo}
+                        className="min-w-[120px]"
+                      >
+                        <Download className="mr-2 h-4 w-4" />
+                        ダウンロード
+                      </Button>
+                      <Button 
+                        size="sm"
+                        variant="secondary"
+                        onClick={exportHighQuality60fps}
+                        className="min-w-[160px]"
+                      >
+                        60fps高画質出力
+                      </Button>
+                    </div>
             </div>
           </div>
-          
-          {/* 処理状態の表示 */}
-          {uploadedVideo && (
-            <div className="w-full p-4 bg-gray-100 rounded mb-4">
-              <h3 className="font-bold mb-2">アップロードされた動画</h3>
-              <p>ファイル名: {uploadedVideo.name}</p>
-              <p>サイズ: {Math.round(uploadedVideo.size / 1024 / 1024 * 100) / 100} MB</p>
-              <p>状態: {
-                isVideoAnalyzing ? '分析中' :
-                isVideoReady ? '準備完了' :
-                '読み込み中'
-              }</p>
+              )}
+              {/* デバッグ情報とダウンロードボタン */}
+              {processingStatus === 'completed' && (
+                <div className="mt-4 bg-gray-50 dark:bg-gray-900 rounded-md p-4 border border-gray-200 dark:border-gray-800">
+                  <div className="flex flex-col space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-base font-medium text-gray-900 dark:text-gray-100">処理完了</span>
+                      <Button 
+                        size="sm"
+                        variant="default"
+                        onClick={downloadVideo}
+                        className="min-w-[120px]"
+                      >
+                        <Download className="mr-2 h-4 w-4" />
+                        ダウンロード
+                      </Button>
             </div>
-          )}
-          
-          {/* 処理状況の詳細表示 */}
-          {isVideoAnalyzing && (
-            <div className="w-full p-4 bg-blue-100 rounded mb-4">
-              <h3 className="font-bold mb-2 flex items-center">
-                <div className="w-4 h-4 rounded-full bg-blue-500 animate-pulse mr-2" />
-                処理状況
+                    <div className="text-xs text-gray-600 dark:text-gray-400">
+                      URL状態: {outputVideoUrl ? '設定済み' : '未設定'}
+                    </div>
+                    <div className="text-xs text-gray-600 dark:text-gray-400">
+                      自動ダウンロード: {shouldAutoDownloadRef.current ? '有効' : '無効'}
+                    </div>
+                    {!outputVideoUrl && (
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        onClick={startRecording}
+                        className="mt-2"
+                      >
+                        録画を再試行
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
+
+      {/* Stats Panel */}
+      <Card className="mt-4 shadow-sm bg-white dark:bg-gray-850 border-gray-200 dark:border-gray-800">
+        <CardContent className="p-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between">
+            <div className="flex-1">
+              <h3 className="text-base font-medium text-gray-900 dark:text-gray-100 flex items-center">
+                <Info className="mr-2 h-4 w-4 text-gray-500" />
+                統計情報
               </h3>
-              <div className="grid grid-cols-2 gap-4">
-                <p>進行状況: {stats.progress}%</p>
-                <p>処理フレーム: {stats.framesProcessed}</p>
-                <p>現在のFPS: {stats.fps}</p>
-                <p>経過時間: {stats.elapsedTime}秒</p>
-                <p>推定残り時間: {stats.estimatedTimeRemaining}秒</p>
+              </div>
+            <div className="mt-2 md:mt-0 grid grid-cols-2 md:grid-cols-3 gap-4">
+              <div className="text-center">
+                <p className="text-xs text-gray-500 dark:text-gray-400">処理フレーム</p>
+                <p className="text-lg font-semibold text-gray-900 dark:text-gray-100">{stats.framesProcessed}</p>
+            </div>
+              <div className="text-center">
+                <p className="text-xs text-gray-500 dark:text-gray-400">FPS</p>
+                <p className="text-lg font-semibold text-gray-900 dark:text-gray-100">{stats.fps}</p>
+        </div>
+              <div className="text-center">
+                <p className="text-xs text-gray-500 dark:text-gray-400">経過時間</p>
+                <p className="text-lg font-semibold text-gray-900 dark:text-gray-100">{stats.elapsedTime}秒</p>
               </div>
             </div>
-          )}
-        </div>
-      )}
-      
-      {/* 結果の動画を表示 */}
-      {outputVideoUrl && (
-        <div className="mt-4 w-full">
-          <h3 className="font-bold mb-2">処理結果</h3>
-          <video
-            src={outputVideoUrl}
-            className="w-full"
-            controls
-            autoPlay
-          />
-          <div className="mt-2 text-center">
-            <button
-              onClick={downloadVideo}
-              className="px-4 py-2 bg-blue-500 text-white rounded"
-            >
-              この動画をダウンロード
-            </button>
           </div>
-        </div>
+        </CardContent>
+      </Card>
+
+      {/* 常に表示されるダウンロードボタン */}
+      {outputVideoUrl && (
+        <Card className="mt-4 shadow-sm bg-white dark:bg-gray-850 border-gray-200 dark:border-gray-800">
+          <CardContent className="p-4">
+            <div className="flex justify-between items-center">
+              <div>
+                <h3 className="text-base font-medium text-gray-900 dark:text-gray-100">動画のダウンロード</h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400">処理された動画をダウンロードする</p>
+              </div>
+              <div className="flex gap-2">
+                <Button 
+                  variant="default"
+                  onClick={downloadVideo}
+                  size="lg"
+                  className="bg-green-600 hover:bg-green-700 text-white font-bold"
+                >
+                  <Download className="mr-2 h-5 w-5" />
+                  今すぐダウンロード
+                </Button>
+                <Button 
+                  variant="secondary"
+                  onClick={exportHighQuality60fps}
+                  size="lg"
+                  className="font-bold"
+                >
+                  60fps高画質出力
+                </Button>
+              </div>
+          </div>
+          </CardContent>
+        </Card>
       )}
     </div>
   );
