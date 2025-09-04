@@ -2,8 +2,7 @@
 const nextConfig = {
   eslint: { ignoreDuringBuilds: true },
   typescript: { ignoreBuildErrors: true },
-  output: 'export',  // ← 静的エクスポートに変更
-  images: { unoptimized: true }, // 画像最適化を無効化（exportモード用）
+  // Note: API ルートを使うため、静的エクスポートは無効化
   webpack: (config, { isServer }) => {
     if (!isServer) {
       config.resolve.fallback = {

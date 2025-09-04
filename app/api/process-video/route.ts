@@ -40,8 +40,6 @@ export async function POST(request: Request) {
   }
 }
 
-export const runtime = 'edge';
-export const maxDuration = 300;
-
-// ファイルアップロードを処理するための設定
+// Vercel (Node.js Runtime) で動作させる
+export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
