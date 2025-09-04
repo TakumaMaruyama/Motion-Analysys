@@ -555,6 +555,20 @@ const SimpleMotionAnalyzer: React.FC = () => {
     console.log('[stopRecording] 終了');
   }, [isRecording]);
 
+  // 停止後にURLが未生成でも recordedChunks から生成してボタンを出す
+  useEffect(() => {
+    if (!isRecording && recordedChunks.length > 0 && !outputVideoUrl) {
+      try {
+        const mime = recordedMimeType || recordedChunks[0].type || 'video/webm';
+        const blob = new Blob(recordedChunks, { type: mime });
+        if (blob.size > 0) {
+          const url = URL.createObjectURL(blob);
+          setOutputVideoUrl(url);
+        }
+      } catch {}
+    }
+  }, [isRecording, recordedChunks, outputVideoUrl, recordedMimeType]);
+
   // フレーム補間して60fpsでエクスポート
   const exportHighQuality60fps = useCallback(async () => {
     if (isHqExportingRef.current) return;
@@ -1560,7 +1574,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                 </div>
               )}
 
-              {outputVideoUrl && (
+              {(outputVideoUrl || (!isRecording && recordedChunks.length > 0)) && (
                 <div className="mt-4 bg-gray-50 dark:bg-gray-900 rounded-md p-4 border border-gray-200 dark:border-gray-800">
                   <div className="flex flex-col sm:flex-row justify-between items-center space-y-4 sm:space-y-0">
                     <div className="flex-1">
@@ -1683,7 +1697,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
               )}
               
               {/* ビデオモードでも録画結果を表示 */}
-              {outputVideoUrl && (
+              {(outputVideoUrl || (!isRecording && recordedChunks.length > 0)) && (
                 <div className="mt-4 bg-gray-50 dark:bg-gray-900 rounded-md p-4 border border-gray-200 dark:border-gray-800">
                   <div className="flex flex-col sm:flex-row justify-between items-center space-y-4 sm:space-y-0">
                     <div className="flex-1">
@@ -1783,7 +1797,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
       </Card>
 
       {/* 常に表示されるダウンロードボタン */}
-      {outputVideoUrl && (
+      {(outputVideoUrl || (!isRecording && recordedChunks.length > 0)) && (
         <Card className="mt-4 shadow-sm bg-white dark:bg-gray-850 border-gray-200 dark:border-gray-800">
           <CardContent className="p-4">
             <div className="flex justify-between items-center">
