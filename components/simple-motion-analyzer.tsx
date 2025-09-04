@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, Download, Upload, Video, Play, Pause, Film, Camera as CameraIcon, Settings, Info } from 'lucide-react';
+import { Loader2, Download, Upload, Video, Play, Pause, Film, Camera as CameraIcon, Settings, Info, RefreshCcw } from 'lucide-react';
 import { Holistic, POSE_CONNECTIONS, HAND_CONNECTIONS, FACEMESH_TESSELATION, Results } from '@mediapipe/holistic';
 import { Camera } from '@mediapipe/camera_utils';
 import { drawLandmarks, drawConnectors } from '@mediapipe/drawing_utils';
@@ -47,6 +47,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
   const [uploadedVideoUrl, setUploadedVideoUrl] = useState<string | null>(null);
   const [isVideoAnalyzing, setIsVideoAnalyzing] = useState<boolean>(false);
   const [isVideoReady, setIsVideoReady] = useState<boolean>(false);
+  const [cameraFacing, setCameraFacing] = useState<'user' | 'environment'>('user'); // スマホはインカメをデフォルト
 
   // 統計情報
   const [stats, setStats] = useState({
@@ -283,7 +284,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
           width: { ideal: 1280 },
           height: { ideal: 720 },
           frameRate: { ideal: 30 },
-          facingMode: 'environment'
+          facingMode: cameraFacing
         },
         audio: false
       };
@@ -293,8 +294,10 @@ const SimpleMotionAnalyzer: React.FC = () => {
       try {
         stream = await navigator.mediaDevices.getUserMedia(constraints);
       } catch (e) {
-        console.warn('背面カメラ取得に失敗。前面にフォールバックします:', e);
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+        console.warn('指定したカメラ取得に失敗。フォールバックします:', e);
+        const fallback = cameraFacing === 'user' ? 'environment' : 'user';
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: fallback }, audio: false });
+        setCameraFacing(fallback);
       }
       setVideoStream(stream);
 
@@ -364,7 +367,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
             },
             width: videoRef.current.videoWidth,
             height: videoRef.current.videoHeight,
-            facingMode: 'environment'
+            facingMode: cameraFacing
           });
           
           console.log('カメラ開始');
@@ -393,7 +396,22 @@ const SimpleMotionAnalyzer: React.FC = () => {
       
       setIsInitialized(false);
     }
-  }, [initHolistic, videoStream]);
+  }, [initHolistic, videoStream, cameraFacing]);
+
+  // カメラ切替
+  const switchCamera = useCallback(async () => {
+    const next = cameraFacing === 'user' ? 'environment' : 'user';
+    // 既存のストリーム/カメラを停止
+    try { cameraRef.current?.stop(); } catch {}
+    if (videoStream) {
+      videoStream.getTracks().forEach(t => t.stop());
+    }
+    setVideoStream(null);
+    setCameraFacing(next);
+    // 再初期化
+    await initHolistic();
+    await initCamera();
+  }, [cameraFacing, videoStream, initCamera, initHolistic]);
 
   // 録画した動画をダウンロード
   const downloadVideo = useCallback(() => {
@@ -1495,6 +1513,26 @@ const SimpleMotionAnalyzer: React.FC = () => {
                         </TooltipTrigger>
                         <TooltipContent>
                           <p>カメラを起動または停止します</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button 
+                            size="sm"
+                            variant="secondary"
+                            onClick={switchCamera}
+                            className="min-w-[140px]"
+                            disabled={isLoading}
+                          >
+                            <RefreshCcw className="mr-2 h-4 w-4" />
+                            カメラ切替
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>インカメ/アウトカメを切り替えます（現在: {cameraFacing === 'user' ? 'インカメ' : 'アウトカメ'}）</p>
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
