@@ -1266,7 +1266,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
     console.log('動画分析を停止しました');
   }, []);
 
-  // メインの処理ループ
+  // メインの処理ループ（アップロード動画の分析と自動録画）
   const processVideo = useCallback(async () => {
     if (!uploadedVideoRef.current || !canvasRef.current || !holisticRef.current) {
       console.error('必要なリソースが見つかりません');
@@ -1275,17 +1275,10 @@ const SimpleMotionAnalyzer: React.FC = () => {
     }
 
     const videoElement = uploadedVideoRef.current;
-    const canvas = canvasRef.current;
     const holistic = holisticRef.current;
-    const ctx = canvas.getContext('2d');
-    
-    if (!ctx) {
-      console.error('キャンバスコンテキストを取得できません');
-      setProcessingStatus('error');
-      return;
-    }
+    const duration = isFinite(videoElement.duration) ? videoElement.duration : 0;
 
-    // 処理状態の初期化
+    // 状態初期化
     const processor = frameProcessorRef.current;
     processor.isProcessing = true;
     processor.shouldStop = false;
@@ -1294,28 +1287,69 @@ const SimpleMotionAnalyzer: React.FC = () => {
     processor.startTime = performance.now();
     processor.lastUpdateTime = performance.now();
 
-    // 処理完了したら表示モードに切り替え
-      if (!processor.shouldStop) {
-        setProcessingStatus('completed');
-        updateProcessingProgress({
-          status: 'completed',
-          progress: 100
-        });
+    setProcessingStatus('processing');
+    updateProcessingProgress({ status: 'processing', progress: 0, currentFrame: 0, totalFrames: 0, fps: 0, elapsedTime: 0, estimatedTimeRemaining: Math.max(0, Math.round(duration)) });
 
-      // 自動ダウンロードを有効化
-      shouldAutoDownloadRef.current = true;
-      console.log('自動ダウンロードを有効化しました');
+    // キャンバス録画を自動開始（出力動画生成のため）
+    try {
+      startRecording();
+    } catch (e) {
+      console.warn('自動録画開始に失敗しましたが処理は継続します:', e);
+    }
 
-      // 録画開始を促す - 循環依存を避けるために直接呼び出さない
-        setTimeout(() => {
-          if (uploadedVideoRef.current) {
-            uploadedVideoRef.current.currentTime = 0;
-          console.log('録画準備完了 - 録画開始ボタンをクリックしてください');
-          alert('分析が完了しました。「録画開始」ボタンをクリックして録画を開始してください。');
-          }
-        }, 500);
+    // 解析用ループ（過負荷を避けるために重複送信を防止）
+    let sending = false;
+    const targetFps = 24; // 処理用のターゲットFPS
+    const intervalMs = Math.max(10, Math.round(1000 / targetFps));
+
+    const intervalId = setInterval(async () => {
+      if (processor.shouldStop) return;
+      if (!uploadedVideoRef.current || !holisticRef.current) return;
+      if (videoElement.paused || videoElement.ended) return;
+      if (sending) return;
+
+      try {
+        sending = true;
+        await holistic.send({ image: videoElement });
+        processor.processedFrames += 1;
+
+        // 進捗更新
+        const cur = videoElement.currentTime;
+        const total = videoElement.duration || duration || 1;
+        const elapsedMs = performance.now() - processor.startTime;
+        const fps = processor.processedFrames / Math.max(0.001, elapsedMs / 1000);
+        const progress = Math.min(100, Math.max(0, (cur / total) * 100));
+        const eta = progress > 0 ? (elapsedMs / 1000) * ((100 - progress) / progress) : Math.round(total);
+        updateProcessingProgress({ status: 'processing', progress: Math.round(progress), currentFrame: processor.processedFrames, fps: Math.round(fps), elapsedTime: Math.round(elapsedMs / 1000), estimatedTimeRemaining: Math.max(0, Math.round(eta)) });
+      } catch (e) {
+        console.warn('holistic.send エラー:', e);
+      } finally {
+        sending = false;
       }
-  }, [updateProcessingProgress]);
+    }, intervalMs);
+
+    // 再生と完了処理
+    const handleEnded = () => {
+      try {
+        processor.shouldStop = true;
+        clearInterval(intervalId);
+        setProcessingStatus('completed');
+        updateProcessingProgress({ status: 'completed', progress: 100 });
+      } finally {
+        // 録画停止（出力URLは onstop ハンドラで生成される）
+        stopRecording();
+        videoElement.removeEventListener('ended', handleEnded);
+      }
+    };
+
+    videoElement.addEventListener('ended', handleEnded, { once: true });
+    try {
+      videoElement.currentTime = 0;
+      await videoElement.play();
+    } catch (e) {
+      console.error('動画の自動再生に失敗しました。ユーザー操作が必要です:', e);
+    }
+  }, [startRecording, stopRecording, updateProcessingProgress]);
 
   // 動画アップロード処理
   const handleVideoUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
