@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, Download, Upload, Video, Play, Pause, Film, Camera as CameraIcon, Settings, Info, RefreshCcw } from 'lucide-react';
+import { Loader2, Download, Upload, Video, Play, Pause, Film, Camera as CameraIcon, Settings, Info, RefreshCcw, Maximize2, Minimize2 } from 'lucide-react';
 import { Holistic, POSE_CONNECTIONS, HAND_CONNECTIONS, FACEMESH_TESSELATION, Results } from '@mediapipe/holistic';
 import { Camera } from '@mediapipe/camera_utils';
 import { drawLandmarks, drawConnectors } from '@mediapipe/drawing_utils';
@@ -91,6 +91,14 @@ const SimpleMotionAnalyzer: React.FC = () => {
     estimatedTimeRemaining: 0
   });
 
+  // 画面サイズ・フルスクリーン制御
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const cameraContainerRef = useRef<HTMLDivElement>(null);
+
+  const toggleFullscreen = useCallback(() => {
+    setIsFullscreen((prev) => !prev);
+  }, []);
+
   // 動画処理の進捗更新（他のコールバックから参照されるため早めに定義）
   const updateProcessingProgress = useCallback((updates: Partial<ProcessingProgress>) => {
     setProcessingProgress(prev => ({
@@ -152,17 +160,27 @@ const SimpleMotionAnalyzer: React.FC = () => {
     if (!ctx) return;
     ctx.imageSmoothingEnabled = true;
     // 背景を最新フレームで更新
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (analysisMode === 'camera' && videoRef.current) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+      if (cameraFacing === 'user') {
+        // インカメ時は左右反転して描画（オーバーレイも同じ座標変換下で描画）
+        ctx.save();
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+        drawOverlay(ctx, canvas.width, canvas.height);
+        ctx.restore();
+      } else {
+        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+        drawOverlay(ctx, canvas.width, canvas.height);
+      }
     } else if (analysisMode === 'video' && uploadedVideoRef.current) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(uploadedVideoRef.current, 0, 0, canvas.width, canvas.height);
+      // アップロード動画は反転しない
+      drawOverlay(ctx, canvas.width, canvas.height);
     }
-    // 最新結果をオーバーレイ
-    drawOverlay(ctx, canvas.width, canvas.height);
     animationFrameRef.current = requestAnimationFrame(renderLoop);
-  }, [analysisMode, drawOverlay]);
+  }, [analysisMode, cameraFacing, drawOverlay]);
 
   const startRenderLoop = useCallback(() => {
     if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
@@ -1464,19 +1482,19 @@ const SimpleMotionAnalyzer: React.FC = () => {
 
             <TabsContent value="camera" className="p-4 space-y-4">
               <div className="bg-gray-50 dark:bg-gray-900 rounded-md p-4 border border-gray-200 dark:border-gray-800">
-                <div className="flex flex-col sm:flex-row justify-between items-center space-y-4 sm:space-y-0 sm:space-x-4">
+                <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
                   <div className="flex-1">
                     <h3 className="text-base font-medium text-gray-900 dark:text-gray-100">カメラによる動作分析</h3>
                     <p className="text-sm text-gray-600 dark:text-gray-400">
                       カメラを起動して、リアルタイムで動作分析を行います
                     </p>
                   </div>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-3">
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button 
-                            size="sm"
+                            size="default"
                             variant={isInitialized ? "destructive" : "default"}
                             onClick={() => {
                               if (!isInitialized) {
@@ -1505,7 +1523,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                                 resetStats();
                               }
                             }}
-                            className="min-w-[120px]"
+                            className="min-w-[140px]"
                             disabled={isLoading}
                           >
                             {isInitialized ? '停止' : 'カメラ起動'}
@@ -1521,7 +1539,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button 
-                            size="sm"
+                            size="default"
                             variant="secondary"
                             onClick={switchCamera}
                             className="min-w-[140px]"
@@ -1541,10 +1559,10 @@ const SimpleMotionAnalyzer: React.FC = () => {
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button 
-                            size="sm"
+                            size="default"
                             variant="outline"
                             onClick={isRecording ? stopRecording : startRecording}
-                            className="min-w-[120px]"
+                            className="min-w-[140px]"
                             disabled={!isInitialized || isLoading}
                           >
                             {isRecording ? (
@@ -1562,30 +1580,62 @@ const SimpleMotionAnalyzer: React.FC = () => {
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button 
+                            size="default"
+                            variant="ghost"
+                            onClick={toggleFullscreen}
+                            className="min-w-[44px]"
+                            disabled={isLoading}
+                            aria-label={isFullscreen ? '縮小' : '全画面'}
+                          >
+                            {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>{isFullscreen ? '縮小表示に戻す' : 'プレビューを全画面表示'}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   </div>
                 </div>
       </div>
       
-              <div className="relative aspect-video bg-black rounded-md overflow-hidden">
+              <div 
+                ref={cameraContainerRef}
+                className={[
+                  'relative bg-black rounded-md overflow-hidden',
+                  isFullscreen ? 'fixed inset-0 z-50 m-0 rounded-none' : 'w-full min-h-[55vh] md:min-h-[65vh]'
+                ].join(' ')}
+              >
                 {isLoading && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-gray-900/50 z-10">
+                  <div className="absolute inset-0 flex items-center justify-center bg-gray-900/50 z-20">
                     <Loader2 className="h-8 w-8 animate-spin text-white" />
                   </div>
                 )}
                 
-                <div className="relative w-full h-full">
+                <div className="absolute inset-0">
             <video
               ref={videoRef}
                     className="w-full h-full object-contain"
+              style={{ transform: cameraFacing === 'user' ? 'scaleX(-1)' : 'none' }}
               playsInline
               autoPlay
               muted
             />
             <canvas
               ref={canvasRef}
-                    className="absolute top-0 left-0 w-full h-full z-10" 
+                    className="absolute top-0 left-0 w-full h-full z-10 pointer-events-none" 
             />
-              </div>
+                </div>
+
+                <div className="absolute top-2 right-2 z-30">
+                  <Button size="icon" variant="secondary" onClick={toggleFullscreen} aria-label={isFullscreen ? '縮小' : '全画面'}>
+                    {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                  </Button>
+                </div>
           </div>
           
               {processingStatus !== 'idle' && (
