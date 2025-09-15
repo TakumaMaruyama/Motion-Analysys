@@ -3,17 +3,20 @@
 import React, { useState } from 'react';
 import { Menu, X, Moon, Sun } from 'lucide-react';
 import { useTheme } from 'next-themes';
+import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 
 const Header: React.FC = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const { theme, setTheme } = useTheme();
+  const pathname = usePathname();
+  const isCameraPage = pathname?.startsWith('/motion-analysis');
 
   const toggleMenu = () => setIsMenuOpen(!isMenuOpen);
   const toggleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
 
   return (
-    <header className="sticky top-0 z-50 w-full bg-white/80 dark:bg-gray-900/80 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 shadow-sm">
+    <header className={`sticky top-0 z-50 w-full bg-white/80 dark:bg-gray-900/80 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 shadow-sm ${isCameraPage ? 'hidden md:block' : ''}`}>
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* ロゴ */}

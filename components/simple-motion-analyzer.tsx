@@ -47,7 +47,12 @@ const SimpleMotionAnalyzer: React.FC = () => {
   const [uploadedVideoUrl, setUploadedVideoUrl] = useState<string | null>(null);
   const [isVideoAnalyzing, setIsVideoAnalyzing] = useState<boolean>(false);
   const [isVideoReady, setIsVideoReady] = useState<boolean>(false);
-  const [cameraFacing, setCameraFacing] = useState<'user' | 'environment'>('user'); // スマホはインカメをデフォルト
+  // スマホのアウトカメラ利用を前提にデフォルトを背面に変更
+  const [cameraFacing, setCameraFacing] = useState<'user' | 'environment'>('environment');
+  // モバイル端末向けのライト(トーチ)制御
+  const [isTorchSupported, setIsTorchSupported] = useState<boolean>(false);
+  const [isTorchOn, setIsTorchOn] = useState<boolean>(false);
+  const videoTrackRef = useRef<MediaStreamTrack | null>(null);
 
   // 統計情報
   const [stats, setStats] = useState({
@@ -280,8 +285,8 @@ const SimpleMotionAnalyzer: React.FC = () => {
     }
   }, [analysisMode]);
 
-  // カメラの初期化
-  const initCamera = useCallback(async () => {
+  // カメラの初期化（明示的にfacingを指定可能）
+  const initCamera = useCallback(async (overrideFacing?: 'user' | 'environment') => {
     try {
       setIsLoading(true);
       console.log('カメラ初期化開始');
@@ -295,26 +300,87 @@ const SimpleMotionAnalyzer: React.FC = () => {
       if (videoStream) {
         videoStream.getTracks().forEach(track => track.stop());
       }
+      // トーチ状態を初期化
+      setIsTorchSupported(false);
+      setIsTorchOn(false);
+      videoTrackRef.current = null;
       
       // ユーザーのカメラにアクセス
-      const constraints: MediaStreamConstraints = {
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30 },
-          facingMode: cameraFacing
+      const targetFacing = overrideFacing ?? cameraFacing;
+      // iOS Safari 等の互換性のため、複数パターンのconstraintsでフォールバック
+      const constraintCandidates: MediaStreamConstraints[] = [
+        {
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 },
+            facingMode: { ideal: targetFacing as any }
+          },
+          audio: false
         },
-        audio: false
-      };
+        {
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 },
+            facingMode: targetFacing as any
+          },
+          audio: false
+        },
+        {
+          // 一部端末では exact の方が安定
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 },
+            facingMode: { exact: targetFacing as any }
+          },
+          audio: false
+        }
+      ];
       
       console.log('カメラアクセス要求');
-      let stream: MediaStream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-      } catch (e) {
-        console.warn('指定したカメラ取得に失敗。フォールバックします:', e);
-        const fallback = cameraFacing === 'user' ? 'environment' : 'user';
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: fallback }, audio: false });
+      let stream: MediaStream | null = null;
+      let lastError: unknown = null;
+      for (const c of constraintCandidates) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(c);
+          console.log('getUserMedia成功 constraints:', c);
+          break;
+        } catch (e) {
+          lastError = e;
+          console.warn('constraintsでの取得に失敗。次の候補を試します:', c, e);
+        }
+      }
+
+      // すべて失敗した場合、enumerateDevicesからdeviceIdを推測
+      if (!stream) {
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const videoInputs = devices.filter(d => d.kind === 'videoinput');
+          // labelに基づいて背面/前面を推定（権限付与後でないとlabelは空のことあり）
+          const pick = (wantEnv: boolean) => {
+            const keywords = wantEnv ? ['back', 'rear', 'environment'] : ['front', 'user', 'face'];
+            const preferred = videoInputs.find(d => keywords.some(k => d.label.toLowerCase().includes(k))) || null;
+            return preferred || videoInputs[wantEnv ? videoInputs.length - 1 : 0] || null;
+          };
+          const device = pick(targetFacing === 'environment');
+          if (device?.deviceId) {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { deviceId: { exact: device.deviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+              audio: false
+            });
+          }
+        } catch (e) {
+          lastError = e;
+        }
+      }
+
+      if (!stream) {
+        // 最後の手段として相手側にフォールバック
+        const fallback = targetFacing === 'user' ? 'environment' : 'user';
+        console.warn('全て失敗。最後に逆向きカメラで試行:', fallback, lastError);
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: fallback as any } }, audio: false });
         setCameraFacing(fallback);
       }
       setVideoStream(stream);
@@ -329,8 +395,16 @@ const SimpleMotionAnalyzer: React.FC = () => {
         } as MediaTrackConstraints);
       } catch {}
       
-      // フレームレートを取得
+      // フレームレート/能力を取得
       const videoTrack = stream.getVideoTracks()[0];
+      videoTrackRef.current = videoTrack;
+      // Torchサポート確認（Android Chrome系で利用可能な場合あり）
+      try {
+        const caps: any = (videoTrack as any).getCapabilities?.() || {};
+        if (typeof caps.torch !== 'undefined') {
+          setIsTorchSupported(true);
+        }
+      } catch {}
       const settings = videoTrack.getSettings();
       const actualFrameRate = settings.frameRate || 30;
       setOriginalFrameRate(actualFrameRate);
@@ -349,6 +423,19 @@ const SimpleMotionAnalyzer: React.FC = () => {
         } catch (playErr) {
           console.warn('video.play() 失敗。ユーザー操作が必要な可能性:', playErr);
         }
+
+        // メタデータ読み込みを待ってからサイズを確定（モバイルでの0x0対策）
+        await new Promise<void>((resolve) => {
+          const v = videoRef.current!;
+          if (v.readyState >= 1 && v.videoWidth && v.videoHeight) {
+            resolve();
+            return;
+          }
+          const onLoaded = () => {
+            resolve();
+          };
+          v.addEventListener('loadedmetadata', onLoaded, { once: true });
+        });
         
         // キャンバスのサイズを設定
         if (canvasRef.current) {
@@ -385,7 +472,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
             },
             width: videoRef.current.videoWidth,
             height: videoRef.current.videoHeight,
-            facingMode: cameraFacing
+            facingMode: targetFacing
           });
           
           console.log('カメラ開始');
@@ -400,6 +487,9 @@ const SimpleMotionAnalyzer: React.FC = () => {
     } catch (error) {
       console.error('カメラの初期化に失敗しました:', error);
       setIsLoading(false);
+      setIsTorchSupported(false);
+      setIsTorchOn(false);
+      videoTrackRef.current = null;
       
       // エラー時に既存のリソースをクリーンアップ
       if (holisticRef.current) {
@@ -425,11 +515,30 @@ const SimpleMotionAnalyzer: React.FC = () => {
       videoStream.getTracks().forEach(t => t.stop());
     }
     setVideoStream(null);
-    setCameraFacing(next);
-    // 再初期化
+    setIsTorchSupported(false);
+    setIsTorchOn(false);
+    videoTrackRef.current = null;
+    // Holistic を再初期化後、明示的に次の向きでカメラを初期化
     await initHolistic();
-    await initCamera();
+    await initCamera(next);
+    // 成功したら状態を更新（UI表示の整合性のため）
+    setCameraFacing(next);
   }, [cameraFacing, videoStream, initCamera, initHolistic]);
+
+  // トーチのON/OFF
+  const toggleTorch = useCallback(async () => {
+    try {
+      const track = videoTrackRef.current;
+      if (!track) return;
+      const caps: any = (track as any).getCapabilities?.();
+      if (!caps || typeof caps.torch === 'undefined') return;
+      const next = !isTorchOn;
+      await (track as any).applyConstraints({ advanced: [{ torch: next }] });
+      setIsTorchOn(next);
+    } catch (e) {
+      console.warn('トーチ切替に失敗:', e);
+    }
+  }, [isTorchOn]);
 
   // 録画した動画をダウンロード
   const downloadVideo = useCallback(() => {
@@ -1588,6 +1697,27 @@ const SimpleMotionAnalyzer: React.FC = () => {
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
+
+                    {isTorchSupported && (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button 
+                              size="default"
+                              variant={isTorchOn ? 'destructive' : 'outline'}
+                              onClick={toggleTorch}
+                              className="min-w-[120px]"
+                              disabled={isLoading}
+                            >
+                              {isTorchOn ? 'ライトOFF' : 'ライトON'}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>背面ライト（トーチ）を{isTorchOn ? 'オフ' : 'オン'}にします</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
 
                     <TooltipProvider>
                       <Tooltip>
