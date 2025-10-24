@@ -8,32 +8,56 @@ import { Loader2, Download, Upload, Video, Play, Pause, Film, Camera as CameraIc
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Progress } from '@/components/ui/progress';
 
-// MediaPipeの型定義を安全にインポート
-let Holistic: any;
-let Camera: any;
-let drawLandmarks: any;
-let drawConnectors: any;
-let POSE_CONNECTIONS: any;
-let HAND_CONNECTIONS: any;
-let FACEMESH_TESSELATION: any;
+// MediaPipeの型定義
+let Holistic: any = null;
+let Camera: any = null;
+let drawLandmarks: any = null;
+let drawConnectors: any = null;
+let POSE_CONNECTIONS: any = null;
+let HAND_CONNECTIONS: any = null;
+let FACEMESH_TESSELATION: any = null;
+
+// MediaPipeモジュールのロード状態を管理
+let mediaPipeLoadPromise: Promise<void> | null = null;
 
 // クライアントサイドでのみMediaPipeをロード
+const loadMediaPipeModules = async () => {
+  if (typeof window === 'undefined') return;
+  
+  if (mediaPipeLoadPromise) {
+    return mediaPipeLoadPromise;
+  }
+  
+  mediaPipeLoadPromise = (async () => {
+    try {
+      const [holisticModule, cameraModule, drawingModule] = await Promise.all([
+        import('@mediapipe/holistic'),
+        import('@mediapipe/camera_utils'),
+        import('@mediapipe/drawing_utils')
+      ]);
+      
+      Holistic = holisticModule.Holistic;
+      POSE_CONNECTIONS = holisticModule.POSE_CONNECTIONS;
+      HAND_CONNECTIONS = holisticModule.HAND_CONNECTIONS;
+      FACEMESH_TESSELATION = holisticModule.FACEMESH_TESSELATION;
+      Camera = cameraModule.Camera;
+      drawLandmarks = drawingModule.drawLandmarks;
+      drawConnectors = drawingModule.drawConnectors;
+      
+      console.log('MediaPipeモジュールの読み込み完了');
+    } catch (err) {
+      console.error('MediaPipeの読み込みに失敗:', err);
+      mediaPipeLoadPromise = null;
+      throw err;
+    }
+  })();
+  
+  return mediaPipeLoadPromise;
+};
+
+// 初期化時にロードを開始
 if (typeof window !== 'undefined') {
-  Promise.all([
-    import('@mediapipe/holistic'),
-    import('@mediapipe/camera_utils'),
-    import('@mediapipe/drawing_utils')
-  ]).then(([holisticModule, cameraModule, drawingModule]) => {
-    Holistic = holisticModule.Holistic;
-    POSE_CONNECTIONS = holisticModule.POSE_CONNECTIONS;
-    HAND_CONNECTIONS = holisticModule.HAND_CONNECTIONS;
-    FACEMESH_TESSELATION = holisticModule.FACEMESH_TESSELATION;
-    Camera = cameraModule.Camera;
-    drawLandmarks = drawingModule.drawLandmarks;
-    drawConnectors = drawingModule.drawConnectors;
-  }).catch(err => {
-    console.error('MediaPipeの読み込みに失敗:', err);
-  });
+  loadMediaPipeModules().catch(console.error);
 }
 
 type AnalysisMode = 'camera' | 'video';
@@ -239,13 +263,11 @@ export const SimpleMotionAnalyzer: React.FC = () => {
     try {
       console.log('Holistic初期化開始');
 
-      // MediaPipeがロードされるまで待機
+      // MediaPipeモジュールのロードを待機
+      await loadMediaPipeModules();
+      
       if (!Holistic) {
-        console.log('MediaPipeライブラリを待機中...');
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        if (!Holistic) {
-          throw new Error('MediaPipeライブラリが読み込まれていません');
-        }
+        throw new Error('MediaPipeライブラリが読み込まれていません');
       }
 
       // すでに存在する場合はクリーンアップ
