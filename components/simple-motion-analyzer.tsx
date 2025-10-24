@@ -8,57 +8,7 @@ import { Loader2, Download, Upload, Video, Play, Pause, Film, Camera as CameraIc
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Progress } from '@/components/ui/progress';
 
-// MediaPipeの型定義
-let Holistic: any = null;
-let Camera: any = null;
-let drawLandmarks: any = null;
-let drawConnectors: any = null;
-let POSE_CONNECTIONS: any = null;
-let HAND_CONNECTIONS: any = null;
-let FACEMESH_TESSELATION: any = null;
-
-// MediaPipeモジュールのロード状態を管理
-let mediaPipeLoadPromise: Promise<void> | null = null;
-
-// クライアントサイドでのみMediaPipeをロード
-const loadMediaPipeModules = async () => {
-  if (typeof window === 'undefined') return;
-  
-  if (mediaPipeLoadPromise) {
-    return mediaPipeLoadPromise;
-  }
-  
-  mediaPipeLoadPromise = (async () => {
-    try {
-      const [holisticModule, cameraModule, drawingModule] = await Promise.all([
-        import('@mediapipe/holistic'),
-        import('@mediapipe/camera_utils'),
-        import('@mediapipe/drawing_utils')
-      ]);
-      
-      Holistic = holisticModule.Holistic;
-      POSE_CONNECTIONS = holisticModule.POSE_CONNECTIONS;
-      HAND_CONNECTIONS = holisticModule.HAND_CONNECTIONS;
-      FACEMESH_TESSELATION = holisticModule.FACEMESH_TESSELATION;
-      Camera = cameraModule.Camera;
-      drawLandmarks = drawingModule.drawLandmarks;
-      drawConnectors = drawingModule.drawConnectors;
-      
-      console.log('MediaPipeモジュールの読み込み完了');
-    } catch (err) {
-      console.error('MediaPipeの読み込みに失敗:', err);
-      mediaPipeLoadPromise = null;
-      throw err;
-    }
-  })();
-  
-  return mediaPipeLoadPromise;
-};
-
-// 初期化時にロードを開始
-if (typeof window !== 'undefined') {
-  loadMediaPipeModules().catch(console.error);
-}
+// MediaPipeの型定義 - useStateで管理することでHMRの問題を回避
 
 type AnalysisMode = 'camera' | 'video';
 
@@ -90,6 +40,17 @@ interface ProcessingProgress {
 }
 
 export const SimpleMotionAnalyzer: React.FC = () => {
+  // MediaPipeモジュールの状態管理
+  const [mediaModules, setMediaModules] = useState<{
+    Holistic: any;
+    Camera: any;
+    drawLandmarks: any;
+    drawConnectors: any;
+    POSE_CONNECTIONS: any;
+    HAND_CONNECTIONS: any;
+    FACEMESH_TESSELATION: any;
+  } | null>(null);
+
   // 分析モード設定
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('camera');
 
@@ -163,6 +124,46 @@ export const SimpleMotionAnalyzer: React.FC = () => {
     setIsFullscreen((prev) => !prev);
   }, []);
 
+  // MediaPipeモジュールの初期化
+  useEffect(() => {
+    let mounted = true;
+    
+    const loadModules = async () => {
+      try {
+        console.log('MediaPipeモジュールを読み込み中...');
+        const [holisticModule, cameraModule, drawingModule] = await Promise.all([
+          import('@mediapipe/holistic'),
+          import('@mediapipe/camera_utils'),
+          import('@mediapipe/drawing_utils')
+        ]);
+        
+        if (mounted) {
+          setMediaModules({
+            Holistic: holisticModule.Holistic,
+            Camera: cameraModule.Camera,
+            drawLandmarks: drawingModule.drawLandmarks,
+            drawConnectors: drawingModule.drawConnectors,
+            POSE_CONNECTIONS: holisticModule.POSE_CONNECTIONS,
+            HAND_CONNECTIONS: holisticModule.HAND_CONNECTIONS,
+            FACEMESH_TESSELATION: holisticModule.FACEMESH_TESSELATION
+          });
+          console.log('MediaPipeモジュールの読み込み完了');
+        }
+      } catch (err) {
+        console.error('MediaPipeの読み込みに失敗:', err);
+        if (mounted) {
+          alert('MediaPipeの読み込みに失敗しました。ページを再読み込みしてください。');
+        }
+      }
+    };
+    
+    loadModules();
+    
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   // 動画処理の進捗更新（他のコールバックから参照されるため早めに定義）
   const updateProcessingProgress = useCallback((updates: Partial<ProcessingProgress>) => {
     setProcessingProgress(prev => ({
@@ -195,7 +196,9 @@ export const SimpleMotionAnalyzer: React.FC = () => {
   // なめらかな描画用レンダーループ
   const drawOverlay = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number) => {
     const results = latestResultsRef.current;
-    if (!results) return;
+    if (!results || !mediaModules) return;
+
+    const { drawConnectors, drawLandmarks, POSE_CONNECTIONS, HAND_CONNECTIONS, FACEMESH_TESSELATION } = mediaModules;
 
     // 顔のメッシュを描画
     if (results.faceLandmarks) {
@@ -215,7 +218,7 @@ export const SimpleMotionAnalyzer: React.FC = () => {
       drawConnectors(ctx, results.rightHandLandmarks, HAND_CONNECTIONS, { color: '#00CC00', lineWidth: 2 });
       drawLandmarks(ctx, results.rightHandLandmarks, { color: '#FF0000', lineWidth: 1 });
     }
-  }, []);
+  }, [mediaModules]);
 
   const renderLoop = useCallback(() => {
     if (!canvasRef.current) return;
@@ -263,12 +266,11 @@ export const SimpleMotionAnalyzer: React.FC = () => {
     try {
       console.log('Holistic初期化開始');
 
-      // MediaPipeモジュールのロードを待機
-      await loadMediaPipeModules();
-      
-      if (!Holistic) {
+      if (!mediaModules) {
         throw new Error('MediaPipeライブラリが読み込まれていません');
       }
+
+      const { Holistic } = mediaModules;
 
       // すでに存在する場合はクリーンアップ
       if (holisticRef.current) {
@@ -349,7 +351,7 @@ export const SimpleMotionAnalyzer: React.FC = () => {
       setIsInitialized(false);
       return false;
     }
-  }, [analysisMode]);
+  }, [analysisMode, mediaModules]);
 
   // カメラの初期化（明示的にfacingを指定可能）
   const initCamera = useCallback(async (overrideFacing?: 'user' | 'environment') => {
@@ -519,8 +521,9 @@ export const SimpleMotionAnalyzer: React.FC = () => {
         }
 
         // Holisticの準備ができてから、カメラを接続
-        if (holisticRef.current) {
+        if (holisticRef.current && mediaModules) {
           console.log('Camera-Holistic接続を設定');
+          const { Camera } = mediaModules;
           cameraRef.current = new Camera(videoRef.current, {
             onFrame: async () => {
               if (holisticRef.current && videoRef.current) {
@@ -570,7 +573,7 @@ export const SimpleMotionAnalyzer: React.FC = () => {
 
       setIsInitialized(false);
     }
-  }, [initHolistic, videoStream, cameraFacing]);
+  }, [initHolistic, videoStream, cameraFacing, mediaModules, startRenderLoop]);
 
   // カメラ切替
   const switchCamera = useCallback(async () => {
@@ -606,116 +609,111 @@ export const SimpleMotionAnalyzer: React.FC = () => {
     }
   }, [isTorchOn]);
 
-  // 録画した動画をダウンロード（モバイル対応）
+  // 録画した動画をダウンロード（スマホ完全対応版）
   const downloadVideo = useCallback(() => {
     console.log('[downloadVideo] 開始');
-    console.log('[downloadVideo] 状態確認:', {
-      outputVideoUrl: outputVideoUrl ? 'あり' : 'なし',
-      recordedChunks: recordedChunks.length,
-      recordedMimeType
-    });
 
-    if (!outputVideoUrl) {
-      console.error('[downloadVideo] ダウンロードするURLがありません');
+    // Blobを作成または取得
+    let videoBlob: Blob | null = null;
+    let mimeType = 'video/webm';
 
-      if (recordedChunks.length > 0) {
-        console.log(`[downloadVideo] recordedChunks(${recordedChunks.length}個)からBlobを作成`);
-        try {
-          let mimeType = 'video/mp4'; // デフォルトをMP4に変更
-          if (recordedMimeType) {
-            mimeType = recordedMimeType;
-          } else if (recordedChunks[0]?.type) {
-            mimeType = recordedChunks[0].type;
-          }
-
-          console.log(`[downloadVideo] MIMEタイプ: ${mimeType}`);
-          const blob = new Blob(recordedChunks, { type: mimeType });
-          console.log(`[downloadVideo] Blob作成完了: size=${blob.size}, type=${blob.type}`);
-
-          if (blob.size > 0) {
-            const tempUrl = URL.createObjectURL(blob);
-            setOutputVideoUrl(tempUrl);
-            setRecordedMimeType(mimeType);
-
-            const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
-            
-            // モバイル対応: 直接ダウンロードと新しいタブでの開くの両方を試行
-            const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-            
-            if (isMobile) {
-              // モバイルの場合: 新しいタブで開く
-              window.open(tempUrl, '_blank');
-              alert('動画が新しいタブで開かれました。長押しして保存してください。');
-            } else {
-              // デスクトップの場合: 通常のダウンロード
-              const a = document.createElement('a');
-              a.href = tempUrl;
-              a.download = `motion-analysis-${new Date().toISOString().replace(/:/g, '-')}.${extension}`;
-              a.style.display = 'none';
-              document.body.appendChild(a);
-              a.click();
-              setTimeout(() => document.body.removeChild(a), 100);
-            }
-
-            console.log('[downloadVideo] 完了');
-            return;
+    if (outputVideoUrl) {
+      // 既存のURLからBlobを再取得（fetch経由）
+      fetch(outputVideoUrl)
+        .then(res => res.blob())
+        .then(blob => {
+          videoBlob = blob;
+          mimeType = blob.type || recordedMimeType || 'video/webm';
+          performDownload(videoBlob, mimeType);
+        })
+        .catch(err => {
+          console.error('URLからBlobの取得に失敗:', err);
+          // フォールバック: recordedChunksから作成
+          if (recordedChunks.length > 0) {
+            createAndDownloadFromChunks();
           } else {
-            console.error('[downloadVideo] Blobのサイズが0です');
-            alert('エラー: 録画データが破損しています');
+            alert('動画データが見つかりません');
           }
-        } catch (e) {
-          console.error('[downloadVideo] エラー:', e);
-          alert('エラー: 録画データの処理中に問題が発生しました');
-        }
-      } else {
-        console.error('[downloadVideo] 録画データがありません');
-        alert('録画データがありません。まず録画を開始してください');
-      }
-      return;
+        });
+    } else if (recordedChunks.length > 0) {
+      createAndDownloadFromChunks();
+    } else {
+      alert('録画データがありません。まず録画を開始してください。');
     }
 
-    console.log('[downloadVideo] 通常のダウンロード処理開始');
-
-    let extension = 'mp4'; // デフォルトをMP4に
-    let determinedMimeType = recordedMimeType;
-
-    if (!determinedMimeType && recordedChunks.length > 0 && recordedChunks[0]?.type) {
-      determinedMimeType = recordedChunks[0].type;
+    function createAndDownloadFromChunks() {
+      const mime = recordedMimeType || recordedChunks[0]?.type || 'video/webm';
+      const blob = new Blob(recordedChunks, { type: mime });
+      performDownload(blob, mime);
     }
 
-    if (determinedMimeType) {
-      if (determinedMimeType.includes('mp4')) {
-        extension = 'mp4';
-      } else if (determinedMimeType.includes('webm')) {
-        extension = 'webm';
-      }
-      console.log(`[downloadVideo] 拡張子: ${extension}`);
-    }
-
-    try {
+    function performDownload(blob: Blob, mime: string) {
+      const url = URL.createObjectURL(blob);
       const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
       
-      if (isMobile) {
-        // モバイル: 新しいタブで開く
-        window.open(outputVideoUrl, '_blank');
-        alert('動画が新しいタブで開かれました。長押しして「ビデオを保存」を選択してください。');
-      } else {
-        // デスクトップ: ダウンロード
+      console.log(`[downloadVideo] デバイス判定: ${isMobile ? 'モバイル' : 'デスクトップ'}, iOS: ${isIOS}`);
+
+      if (isIOS) {
+        // iOS: videoタグを使って表示し、長押し保存を促す
+        const videoElement = document.createElement('video');
+        videoElement.src = url;
+        videoElement.controls = true;
+        videoElement.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);max-width:90%;max-height:90%;z-index:9999;background:black;';
+        
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:9998;display:flex;flex-direction:column;align-items:center;justify-content:center;';
+        
+        const instruction = document.createElement('div');
+        instruction.style.cssText = 'color:white;font-size:18px;margin-bottom:20px;text-align:center;padding:20px;';
+        instruction.innerHTML = '動画を長押しして<br/>「ビデオを保存」を選択してください';
+        
+        const closeButton = document.createElement('button');
+        closeButton.textContent = '閉じる';
+        closeButton.style.cssText = 'margin-top:20px;padding:10px 30px;font-size:16px;background:white;border:none;border-radius:5px;cursor:pointer;';
+        closeButton.onclick = () => {
+          document.body.removeChild(overlay);
+          URL.revokeObjectURL(url);
+        };
+        
+        overlay.appendChild(instruction);
+        overlay.appendChild(videoElement);
+        overlay.appendChild(closeButton);
+        document.body.appendChild(overlay);
+        
+      } else if (isMobile) {
+        // Android: 直接ダウンロードを試行
         const a = document.createElement('a');
-        a.href = outputVideoUrl;
-        a.download = `motion-analysis-${new Date().toISOString().replace(/:/g, '-')}.${extension}`;
+        a.href = url;
+        a.download = `motion-analysis-${Date.now()}.webm`;
         a.style.display = 'none';
         document.body.appendChild(a);
         a.click();
-        setTimeout(() => document.body.removeChild(a), 100);
+        
+        // フォールバック: 新しいタブで開く
+        setTimeout(() => {
+          window.open(url, '_blank');
+          document.body.removeChild(a);
+        }, 100);
+        
+        alert('ダウンロードが開始されない場合は、新しいタブで開かれた動画を長押しして保存してください。');
+        
+      } else {
+        // デスクトップ: 通常のダウンロード
+        const extension = mime.includes('mp4') ? 'mp4' : 'webm';
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `motion-analysis-${Date.now()}.${extension}`;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 100);
       }
-
-      console.log('[downloadVideo] 完了');
-    } catch (e) {
-      console.error('[downloadVideo] エラー:', e);
-      alert('動画のダウンロード中にエラーが発生しました');
     }
-  }, [outputVideoUrl, recordedMimeType, recordedChunks, canvasRef, isRecording, analysisMode]);
+  }, [outputVideoUrl, recordedMimeType, recordedChunks]);
 
   // 録画停止
   const stopRecording = useCallback(() => {
