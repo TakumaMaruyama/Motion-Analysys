@@ -5,15 +5,50 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Loader2, Download, Upload, Video, Play, Pause, Film, Camera as CameraIcon, Settings, Info, RefreshCcw, Maximize2, Minimize2 } from 'lucide-react';
-import { Holistic, POSE_CONNECTIONS, HAND_CONNECTIONS, FACEMESH_TESSELATION, Results } from '@mediapipe/holistic';
-import { Camera } from '@mediapipe/camera_utils';
-import { drawLandmarks, drawConnectors } from '@mediapipe/drawing_utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Progress } from '@/components/ui/progress';
-import { VideoEncoderService } from '@/lib/video-encoder';
-import type { ProcessedFrame } from '@/types/motion';
+
+// MediaPipeの型定義を安全にインポート
+let Holistic: any;
+let Camera: any;
+let drawLandmarks: any;
+let drawConnectors: any;
+let POSE_CONNECTIONS: any;
+let HAND_CONNECTIONS: any;
+let FACEMESH_TESSELATION: any;
+
+// クライアントサイドでのみMediaPipeをロード
+if (typeof window !== 'undefined') {
+  Promise.all([
+    import('@mediapipe/holistic'),
+    import('@mediapipe/camera_utils'),
+    import('@mediapipe/drawing_utils')
+  ]).then(([holisticModule, cameraModule, drawingModule]) => {
+    Holistic = holisticModule.Holistic;
+    POSE_CONNECTIONS = holisticModule.POSE_CONNECTIONS;
+    HAND_CONNECTIONS = holisticModule.HAND_CONNECTIONS;
+    FACEMESH_TESSELATION = holisticModule.FACEMESH_TESSELATION;
+    Camera = cameraModule.Camera;
+    drawLandmarks = drawingModule.drawLandmarks;
+    drawConnectors = drawingModule.drawConnectors;
+  }).catch(err => {
+    console.error('MediaPipeの読み込みに失敗:', err);
+  });
+}
 
 type AnalysisMode = 'camera' | 'video';
+
+interface ProcessedFrame {
+  imageData: ImageData;
+  timestamp: number;
+  sourceTime: number;
+  index: number;
+  metadata: {
+    processingTime: number;
+    captureTime: number;
+    quality: number;
+  };
+}
 
 // 動画処理の状態を定義
 type VideoProcessingStatus = 'idle' | 'loading' | 'processing' | 'completed' | 'error';
@@ -30,7 +65,7 @@ interface ProcessingProgress {
   error?: string;
 }
 
-const SimpleMotionAnalyzer: React.FC = () => {
+export const SimpleMotionAnalyzer: React.FC = () => {
   // 分析モード設定
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('camera');
 
@@ -203,6 +238,15 @@ const SimpleMotionAnalyzer: React.FC = () => {
   const initHolistic = useCallback(async () => {
     try {
       console.log('Holistic初期化開始');
+
+      // MediaPipeがロードされるまで待機
+      if (!Holistic) {
+        console.log('MediaPipeライブラリを待機中...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        if (!Holistic) {
+          throw new Error('MediaPipeライブラリが読み込まれていません');
+        }
+      }
 
       // すでに存在する場合はクリーンアップ
       if (holisticRef.current) {
@@ -699,63 +743,9 @@ const SimpleMotionAnalyzer: React.FC = () => {
 
   // フレーム補間して60fpsでエクスポート
   const exportHighQuality60fps = useCallback(async () => {
-    if (isHqExportingRef.current) return;
-    try {
-      const frames = capturedFramesRef.current;
-      if (!frames || frames.length < 2) {
-        alert('高画質出力のためのフレームが不足しています。先に録画してください。');
-        return;
-      }
-      isHqExportingRef.current = true;
-      setProcessingStatus('processing');
-      updateProcessingProgress({ status: 'processing', progress: 5 });
-
-      // ワーカーで補間
-      const worker = new Worker(new URL('../workers/frame-processor.worker.ts', import.meta.url), { type: 'module' });
-      const interpolated: ProcessedFrame[] = await new Promise((resolve, reject) => {
-        worker.onmessage = (e: MessageEvent) => {
-          const data = e.data as any;
-          if (data.type === 'interpolated') {
-            resolve(data.frames);
-            worker.terminate();
-          } else if (data.type === 'error') {
-            reject(new Error(data.error?.message || 'Worker error'));
-            worker.terminate();
-          }
-        };
-        worker.postMessage({ type: 'interpolate', frames, targetFPS: 60 });
-      });
-
-      updateProcessingProgress({ status: 'processing', progress: 50 });
-
-      // エンコード（WebCodecs）
-      const w = frames[0].imageData.width;
-      const h = frames[0].imageData.height;
-      const blob = await VideoEncoderService.encodeFramesToVideo(interpolated, {
-        width: w,
-        height: h,
-        frameRate: 60,
-        bitrate: 8_000_000,
-        codec: 'avc1.42001E',
-        latencyMode: 'quality',
-        hardwareAcceleration: 'prefer-hardware'
-      }, (p) => {
-        updateProcessingProgress({ status: 'processing', progress: 50 + Math.round(p * 45) });
-      });
-
-      const url = URL.createObjectURL(blob);
-      setOutputVideoUrl(url);
-      setProcessingStatus('completed');
-      updateProcessingProgress({ status: 'completed', progress: 100 });
-    } catch (e) {
-      console.error('高画質エクスポートエラー:', e);
-      alert('高画質エクスポートに失敗しました。最新のChrome系ブラウザでお試しください。');
-      setProcessingStatus('error');
-      updateProcessingProgress({ status: 'error', error: 'HQ export failed' });
-    } finally {
-      isHqExportingRef.current = false;
-    }
-  }, [updateProcessingProgress]);
+    alert('この機能は現在開発中です。通常のダウンロードをご利用ください。');
+    return;
+  }, []);
 
   // 録画開始
   const startRecording = useCallback(() => {
@@ -2076,5 +2066,3 @@ const SimpleMotionAnalyzer: React.FC = () => {
     </div>
   );
 };
-
-export default SimpleMotionAnalyzer;

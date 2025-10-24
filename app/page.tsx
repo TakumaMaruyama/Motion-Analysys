@@ -1,7 +1,7 @@
 "use client";
 
 import React from 'react';
-import SimpleMotionAnalyzer from '@/components/simple-motion-analyzer';
+import { SimpleMotionAnalyzer } from '@/components/simple-motion-analyzer';
 
 const Page: React.FC = () => {
   return (
