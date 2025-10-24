@@ -912,8 +912,6 @@ const SimpleMotionAnalyzer: React.FC = () => {
 
   // 動画分析の停止処理
   const stopVideoAnalysis = useCallback(() => {
-    if (!isVideoAnalyzing) return;
-    
     console.log('動画分析を停止します');
     
     // フレーム処理を停止
@@ -937,7 +935,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
     setProcessingStatus('idle');
     
     console.log('動画分析を停止しました');
-  }, [isVideoAnalyzing]);
+  }, []);
 
   // 動画分析の開始処理
   const startVideoAnalysis = useCallback(() => {
@@ -1393,10 +1391,12 @@ const SimpleMotionAnalyzer: React.FC = () => {
     updateProcessingProgress({ status: 'processing', progress: 0, currentFrame: 0, totalFrames: 0, fps: 0, elapsedTime: 0, estimatedTimeRemaining: Math.max(0, Math.round(duration)) });
 
     // キャンバス録画を自動開始（出力動画生成のため）
-    try {
-      startRecording();
-    } catch (e) {
-      console.warn('自動録画開始に失敗しましたが処理は継続します:', e);
+    if (!isRecording) {
+      try {
+        startRecording();
+      } catch (e) {
+        console.warn('自動録画開始に失敗しましたが処理は継続します:', e);
+      }
     }
 
     // 解析用ループ（過負荷を避けるために重複送信を防止）
@@ -1544,7 +1544,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
         error: '動画の準備中にエラーが発生しました'
       });
     }
-  }, [isVideoAnalyzing, isRecording, stopVideoAnalysis, stopRecording, initHolistic, updateProcessingProgress, processVideo]);
+  }, [stopVideoAnalysis, stopRecording, initHolistic, startRenderLoop, processVideo]);
 
   // 分析モードの切り替えを修正
   const switchMode = useCallback((mode: AnalysisMode) => {
