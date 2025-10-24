@@ -655,7 +655,7 @@ export const SimpleMotionAnalyzer: React.FC = () => {
       console.log(`[downloadVideo] デバイス判定: ${isMobile ? 'モバイル' : 'デスクトップ'}, iOS: ${isIOS}`);
 
       if (isIOS) {
-        // iOS: videoタグを使って表示し、長押し保存を促す（改善版）
+        // iOS: 新しいタブで開いて共有メニューから保存する方法
         const overlay = document.createElement('div');
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;overflow-y:auto;';
         
@@ -670,21 +670,32 @@ export const SimpleMotionAnalyzer: React.FC = () => {
         instruction.style.cssText = 'color:white;font-size:16px;margin-bottom:20px;text-align:center;line-height:1.8;background:rgba(255,255,255,0.1);padding:20px;border-radius:10px;';
         instruction.innerHTML = `
           <p style="margin-bottom:15px;font-size:18px;font-weight:bold;color:#4ade80;">📱 iPhoneでの保存方法</p>
-          <p style="margin-bottom:10px;">1️⃣ 下の動画を<span style="color:#fbbf24;font-weight:bold;">長押し</span>してください</p>
-          <p style="margin-bottom:10px;">2️⃣ メニューから<span style="color:#fbbf24;font-weight:bold;">「ビデオを保存」</span>を選択</p>
-          <p style="margin-bottom:10px;">3️⃣ 写真アプリに保存されます✅</p>
-          <p style="margin-top:15px;font-size:14px;color:#d1d5db;">※ メニューが表示されない場合は、動画の中央部分を長押ししてください</p>
+          <p style="margin-bottom:10px;">1️⃣ 下の<span style="color:#fbbf24;font-weight:bold;">「動画を開く」</span>ボタンをタップ</p>
+          <p style="margin-bottom:10px;">2️⃣ 新しいタブで動画が開きます</p>
+          <p style="margin-bottom:10px;">3️⃣ 画面下の<span style="color:#fbbf24;font-weight:bold;">共有ボタン📤</span>をタップ</p>
+          <p style="margin-bottom:10px;">4️⃣ <span style="color:#fbbf24;font-weight:bold;">「ビデオを保存」</span>を選択✅</p>
+          <p style="margin-top:15px;font-size:14px;color:#d1d5db;">※ 共有ボタンは画面の下部中央にあります</p>
         `;
+        
+        const openButton = document.createElement('a');
+        openButton.href = url;
+        openButton.target = '_blank';
+        openButton.textContent = '📱 動画を開く';
+        openButton.style.cssText = 'display:block;padding:20px 60px;font-size:20px;background:#10b981;color:white;border:none;border-radius:12px;cursor:pointer;font-weight:bold;text-decoration:none;text-align:center;margin:20px 0;box-shadow:0 4px 20px rgba(16,185,129,0.5);';
+        
+        const previewText = document.createElement('p');
+        previewText.textContent = 'プレビュー:';
+        previewText.style.cssText = 'color:white;font-size:14px;margin-top:30px;margin-bottom:10px;';
         
         const videoElement = document.createElement('video');
         videoElement.src = url;
         videoElement.controls = true;
         videoElement.playsInline = true;
-        videoElement.style.cssText = 'width:100%;max-width:500px;margin:20px 0;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,0.5);';
+        videoElement.style.cssText = 'width:100%;max-width:500px;margin-bottom:20px;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,0.5);';
         
         const closeButton = document.createElement('button');
         closeButton.textContent = '閉じる';
-        closeButton.style.cssText = 'margin-top:20px;padding:12px 40px;font-size:18px;background:#ef4444;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:bold;box-shadow:0 2px 10px rgba(239,68,68,0.5);';
+        closeButton.style.cssText = 'margin-top:10px;padding:12px 40px;font-size:16px;background:#ef4444;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:bold;box-shadow:0 2px 10px rgba(239,68,68,0.5);';
         closeButton.onclick = () => {
           document.body.removeChild(overlay);
           URL.revokeObjectURL(url);
@@ -692,6 +703,8 @@ export const SimpleMotionAnalyzer: React.FC = () => {
         
         container.appendChild(title);
         container.appendChild(instruction);
+        container.appendChild(openButton);
+        container.appendChild(previewText);
         container.appendChild(videoElement);
         container.appendChild(closeButton);
         overlay.appendChild(container);
