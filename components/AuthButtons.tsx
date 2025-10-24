@@ -4,18 +4,22 @@ import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import { isSupabaseEnabled } from '@/lib/storage-adapter';
 
 const AuthButtons: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const router = useRouter();
+  const enabled = isSupabaseEnabled();
 
   useEffect(() => {
+    if (!enabled) return;
+    
     const checkAuth = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       setIsAuthenticated(!!session);
     };
     checkAuth();
-  }, []);
+  }, [enabled]);
 
   const handleLogin = () => {
     router.push('/auth/login');
@@ -26,6 +30,10 @@ const AuthButtons: React.FC = () => {
     setIsAuthenticated(false);
     router.push('/');
   };
+
+  if (!enabled) {
+    return null;
+  }
 
   return (
     <div>

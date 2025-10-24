@@ -1,9 +1,6 @@
-import { createClient } from '@supabase/supabase-js';
+import { getStorageClient } from './storage-adapter';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = getStorageClient();
 
 export const getUser = async () => {
   try {
@@ -16,7 +13,7 @@ export const getUser = async () => {
 };
 
 export const subscribeToAuthChanges = (callback: (event: any, session: any) => void) => {
-  return supabase.auth.onAuthStateChange((event, session) => {
+  return supabase.auth.onAuthStateChange((event: any, session: any) => {
     callback(event, session);
   });
 };
