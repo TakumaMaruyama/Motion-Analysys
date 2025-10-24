@@ -132,12 +132,12 @@ const SimpleMotionAnalyzer: React.FC = () => {
   // グローバル変数の代わりにuseRefを使用するように修正
   const analysisTimerIdRef = useRef<NodeJS.Timeout>();
   const videoProcessingIntervalIdRef = useRef<NodeJS.Timeout>();
-  
+
   // なめらかな描画用レンダーループ
   const drawOverlay = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number) => {
     const results = latestResultsRef.current;
     if (!results) return;
-    
+
     // 顔のメッシュを描画
     if (results.faceLandmarks) {
       drawConnectors(ctx, results.faceLandmarks, FACEMESH_TESSELATION, { color: '#C0C0C070', lineWidth: 1 });
@@ -203,7 +203,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
   const initHolistic = useCallback(async () => {
     try {
       console.log('Holistic初期化開始');
-      
+
       // すでに存在する場合はクリーンアップ
       if (holisticRef.current) {
         try {
@@ -213,7 +213,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
         }
         holisticRef.current = null;
       }
-      
+
       const holistic = new Holistic({
         locateFile: (file) => {
           return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`;
@@ -270,7 +270,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
           });
         }
       });
-      
+
       holisticRef.current = holistic;
       console.log('Holistic設定完了、初期化開始');
       // MediaPipe Holistic は初回 send 呼び出し時に内部的に読み込みが走るため
@@ -290,13 +290,13 @@ const SimpleMotionAnalyzer: React.FC = () => {
     try {
       setIsLoading(true);
       console.log('カメラ初期化開始');
-      
+
       // 既存のリソースをクリーンアップ
       if (cameraRef.current) {
         cameraRef.current.stop();
         cameraRef.current = null;
       }
-      
+
       if (videoStream) {
         videoStream.getTracks().forEach(track => track.stop());
       }
@@ -304,7 +304,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
       setIsTorchSupported(false);
       setIsTorchOn(false);
       videoTrackRef.current = null;
-      
+
       // ユーザーのカメラにアクセス
       const targetFacing = overrideFacing ?? cameraFacing;
       // iOS Safari 等の互換性のため、複数パターンのconstraintsでフォールバック
@@ -338,7 +338,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
           audio: false
         }
       ];
-      
+
       console.log('カメラアクセス要求');
       let stream: MediaStream | null = null;
       let lastError: unknown = null;
@@ -394,7 +394,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
           frameRate: { ideal: 30, max: 30 },
         } as MediaTrackConstraints);
       } catch {}
-      
+
       // フレームレート/能力を取得
       const videoTrack = stream.getVideoTracks()[0];
       videoTrackRef.current = videoTrack;
@@ -409,7 +409,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
       const actualFrameRate = settings.frameRate || 30;
       setOriginalFrameRate(actualFrameRate);
       console.log('取得したフレームレート:', actualFrameRate);
-      
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         // iOS Safari など自動再生のために必要
@@ -436,22 +436,22 @@ const SimpleMotionAnalyzer: React.FC = () => {
           };
           v.addEventListener('loadedmetadata', onLoaded, { once: true });
         });
-        
+
         // キャンバスのサイズを設定
         if (canvasRef.current) {
           canvasRef.current.width = videoRef.current.videoWidth;
           canvasRef.current.height = videoRef.current.videoHeight;
           console.log('キャンバスサイズ設定:', canvasRef.current.width, 'x', canvasRef.current.height);
         }
-        
+
         // まずHolisticを初期化
         console.log('カメラ接続後、Holisticを初期化');
         const success = await initHolistic();
-        
+
         if (!success) {
           throw new Error("Holistic初期化に失敗");
         }
-        
+
         // Holisticの準備ができてから、カメラを接続
         if (holisticRef.current) {
           console.log('Camera-Holistic接続を設定');
@@ -474,7 +474,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
             height: videoRef.current.videoHeight,
             facingMode: targetFacing
           });
-          
+
           console.log('カメラ開始');
           await cameraRef.current.start();
           console.log('カメラ開始完了');
@@ -482,7 +482,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
           startRenderLoop();
         }
       }
-      
+
       setIsLoading(false);
     } catch (error) {
       console.error('カメラの初期化に失敗しました:', error);
@@ -490,18 +490,18 @@ const SimpleMotionAnalyzer: React.FC = () => {
       setIsTorchSupported(false);
       setIsTorchOn(false);
       videoTrackRef.current = null;
-      
+
       // エラー時に既存のリソースをクリーンアップ
       if (holisticRef.current) {
         holisticRef.current.close();
         holisticRef.current = null;
       }
-      
+
       if (cameraRef.current) {
         cameraRef.current.stop();
         cameraRef.current = null;
       }
-      
+
       setIsInitialized(false);
     }
   }, [initHolistic, videoStream, cameraFacing]);
@@ -543,15 +543,15 @@ const SimpleMotionAnalyzer: React.FC = () => {
   // 録画した動画をダウンロード
   const downloadVideo = useCallback(() => {
     console.log('[downloadVideo] 開始');
-    console.log('[downloadVideo] 状態確認:', { 
-      outputVideoUrl: outputVideoUrl ? 'あり' : 'なし', 
+    console.log('[downloadVideo] 状態確認:', {
+      outputVideoUrl: outputVideoUrl ? 'あり' : 'なし',
       recordedChunks: recordedChunks.length,
       recordedMimeType
     });
-    
+
     if (!outputVideoUrl) {
       console.error('[downloadVideo] ダウンロードするURLがありません');
-      
+
       // データはあるがURLが未設定の場合の回復処理
       if (recordedChunks.length > 0) {
         console.log(`[downloadVideo] outputVideoUrlがないが、recordedChunks(${recordedChunks.length}個)からBlobを作成`);
@@ -563,19 +563,19 @@ const SimpleMotionAnalyzer: React.FC = () => {
           } else if (recordedChunks[0]?.type) {
             mimeType = recordedChunks[0].type;
           }
-          
+
           console.log(`[downloadVideo] 推測されたMIMEタイプ: ${mimeType}`);
           const blob = new Blob(recordedChunks, { type: mimeType });
           console.log(`[downloadVideo] 回復Blob作成完了: size=${blob.size}, type=${blob.type}`);
-          
+
           if (blob.size > 0) {
             const tempUrl = URL.createObjectURL(blob);
             console.log('[downloadVideo] 一時URL作成:', tempUrl);
-            
+
             // outputVideoUrlを設定（将来の使用のため）
             setOutputVideoUrl(tempUrl);
             setRecordedMimeType(mimeType);
-            
+
             // 一時URLを使用してダウンロード
             const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
             const a = document.createElement('a');
@@ -583,17 +583,17 @@ const SimpleMotionAnalyzer: React.FC = () => {
             a.download = `motion-analysis-${new Date().toISOString().replace(/:/g, '-')}.${extension}`;
             a.style.display = 'none';
             document.body.appendChild(a);
-            
+
             console.log('[downloadVideo] ダウンロードリンクをクリック');
             a.click();
-            
+
             // クリーンアップ
             setTimeout(() => {
               document.body.removeChild(a);
               // URL.revokeObjectURL(tempUrl); // 再利用できるように保持
               console.log('[downloadVideo] リンク要素を削除');
             }, 100);
-            
+
             console.log('[downloadVideo] 回復処理でダウンロード完了');
             return;
           } else {
@@ -617,13 +617,13 @@ const SimpleMotionAnalyzer: React.FC = () => {
       }
       return;
     }
-    
+
     console.log('[downloadVideo] 通常のダウンロード処理開始 URL:', outputVideoUrl);
-    
+
     // MIMEタイプから拡張子を決定
     let extension = 'webm'; // デフォルト
     let determinedMimeType = recordedMimeType; // ステートから取得
-    
+
     console.log(`[downloadVideo] MIMEタイプ: ${determinedMimeType}, 録画チャンク数: ${recordedChunks.length}`);
 
     // recordedMimeType がなければ recordedChunks から推測
@@ -650,17 +650,17 @@ const SimpleMotionAnalyzer: React.FC = () => {
     a.download = `motion-analysis-${new Date().toISOString().replace(/:/g, '-')}.${extension}`;
       a.style.display = 'none'; // 非表示
     document.body.appendChild(a);
-      
+
       console.log('[downloadVideo] ダウンロードリンクをクリック');
     a.click();
-      
+
       // クリーンアップ
       setTimeout(() => {
     document.body.removeChild(a);
         console.log('[downloadVideo] リンク要素を削除');
         // URL.revokeObjectURL(outputVideoUrl); // ここでは破棄しない（再ダウンロード用）
       }, 100);
-      
+
       console.log('[downloadVideo] ダウンロード処理完了');
     } catch (e) {
       console.error('[downloadVideo] ダウンロード処理中にエラー:', e);
@@ -673,7 +673,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
     console.log('[stopRecording] 開始');
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       console.log('[stopRecording] MediaRecorder停止処理を実行');
-      
+
       try {
           console.log('[stopRecording] mediaRecorder.stop() 呼び出し');
           mediaRecorderRef.current.stop();
@@ -783,12 +783,12 @@ const SimpleMotionAnalyzer: React.FC = () => {
         alert('エラー: 録画するキャンバスが見つかりません');
       return;
     }
-    
+
     if (isRecording) {
         console.log('[startRecording] すでに録画中です');
       return;
     }
-    
+
       // 既存データをクリア
     setRecordedChunks([]);
       setOutputVideoUrl('');
@@ -797,7 +797,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
       console.log('[startRecording] キャンバスからストリームを取得します');
       const captureFps = Math.min(Math.max(15, Math.round(originalFrameRate || 30)), 30);
       const stream = canvasRef.current.captureStream(captureFps); // 安定したFPSでキャプチャ
-      
+
       // サポートされているMIMEタイプを確認
       const supportedTypes = [
         'video/webm;codecs=vp9',
@@ -805,7 +805,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
         'video/webm',
         'video/mp4'
       ];
-      
+
       let mimeType = '';
       for (const type of supportedTypes) {
         if (MediaRecorder.isTypeSupported(type)) {
@@ -820,7 +820,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
         alert('エラー: お使いのブラウザでは録画がサポートされていません');
           return;
       }
-      
+
       // MediaRecorderの設定
       const options = {
         mimeType,
@@ -829,14 +829,14 @@ const SimpleMotionAnalyzer: React.FC = () => {
 
       console.log('[startRecording] MediaRecorderを初期化します', options);
       const mediaRecorder = new MediaRecorder(stream, options);
-      
+
       // データが利用可能になったときのイベントハンドラ
       mediaRecorder.ondataavailable = (event) => {
         console.log(`[ondataavailable] データチャンク取得: サイズ=${event.data.size} bytes, タイプ=${event.data.type}`);
         if (event.data && event.data.size > 0) {
           chunks.push(event.data);
           console.log(`[ondataavailable] ローカルchunks配列に追加: 現在${chunks.length}個`);
-          
+
           // React状態を更新
           setRecordedChunks(prevChunks => {
             const newChunks = [...prevChunks, event.data];
@@ -847,19 +847,19 @@ const SimpleMotionAnalyzer: React.FC = () => {
           console.warn(`[ondataavailable] サイズが0のデータを受信しました`);
         }
       };
-      
+
       // 録画が停止したときのイベントハンドラ
       mediaRecorder.onstop = () => {
         console.log(`[onstop] 録画停止 - ローカルchunks: ${chunks.length}個, recordedChunks: ${recordedChunks.length}個`);
-        
+
         // デバッグ用に実際のチャンクをログ出力
         chunks.forEach((chunk, index) => {
           console.log(`[onstop] チャンク #${index}: サイズ=${chunk.size} bytes, タイプ=${chunk.type}`);
         });
-        
+
         if (chunks.length === 0) {
           console.error('[onstop] ローカルchunksが空です');
-          
+
           // recordedChunksを確認
           if (recordedChunks.length > 0) {
             console.log(`[onstop] recordedChunksには${recordedChunks.length}個のチャンクがあります。これを使用します。`);
@@ -876,27 +876,27 @@ const SimpleMotionAnalyzer: React.FC = () => {
              setIsRecording(false);
           return;
         }
-        
+
         // Blobを作成してURLを生成
         const blob = new Blob(chunks, { type: mimeType });
         console.log(`[onstop] Blobを作成: サイズ=${blob.size} bytes, タイプ=${blob.type}`);
-        
+
         if (blob.size === 0) {
           console.error('[onstop] 作成されたBlobのサイズが0です');
          setIsRecording(false); 
           alert('録画データが空です。ブラウザの互換性の問題かもしれません。');
           return;
         }
-        
+
         const videoUrl = URL.createObjectURL(blob);
         console.log(`[onstop] URL生成: ${videoUrl}`);
-        
+
         // React状態を更新
         setOutputVideoUrl(videoUrl);
         setRecordedMimeType(mimeType);
         setRecordedChunks(chunks); // ローカルchunksで最終的に更新
         setIsRecording(false);
-        
+
         console.log('[onstop] 録画完了 - 状態更新完了');
       };
 
@@ -905,7 +905,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
       mediaRecorder.start(100); // 100msごとにデータチャンクを取得（頻度を上げる）
       setIsRecording(true);
       console.log('[startRecording] 録画を開始しました (チャンク間隔: 100ms)');
-      
+
       // HQエクスポート用のフレーム収集を開始
       if (canvasRef.current) {
         capturedFramesRef.current = [];
@@ -929,7 +929,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
           }, intervalMs);
         }
       }
-      
+
       // 自動停止は行わない（ユーザー操作で停止）
 
     } catch (error) {
@@ -945,28 +945,28 @@ const SimpleMotionAnalyzer: React.FC = () => {
       console.error('ビデオまたはキャンバスが見つかりません');
       return;
     }
-    
+
     if (!isVideoReady) {
       console.error('ビデオの準備ができていません');
       return;
     }
-    
+
     if (isVideoAnalyzing) {
       console.log('すでに分析中です');
       return;
     }
-    
+
     console.log('動画分析を開始します - シンプル実装');
-    
+
     // 動画要素を準備
     const videoElement = uploadedVideoRef.current;
-    
+
     // 既存のタイマーをクリア
     if (videoProcessingIntervalIdRef.current) {
       clearInterval(videoProcessingIntervalIdRef.current);
       videoProcessingIntervalIdRef.current = undefined;
     }
-    
+
     // キャンバス設定
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -974,23 +974,23 @@ const SimpleMotionAnalyzer: React.FC = () => {
       console.error('キャンバスコンテキストを取得できません');
       return;
     }
-    
+
     // 分析状態を初期化
     setIsVideoAnalyzing(true);
     videoAnalysisFrameCountRef.current = 0;
     videoAnalysisStartTimeRef.current = performance.now();
-    
+
     // 動画の時間は0から開始
     videoElement.currentTime = 0;
-    
+
     // 動画の総時間とサイズを取得
     const videoDuration = videoElement.duration;
-    
+
     console.log(`動画情報:`, {
       時間: `${videoDuration.toFixed(2)}秒`,
       サイズ: `${videoElement.videoWidth}x${videoElement.videoHeight}`
     });
-    
+
     // サイズを設定
     canvas.width = videoElement.videoWidth;
     canvas.height = videoElement.videoHeight;
@@ -1000,43 +1000,43 @@ const SimpleMotionAnalyzer: React.FC = () => {
     let isProcessingFrame = false;
     let lastUpdateTime = 0;
     let processedFrameCount = 0;
-    
+
     // このフラグで処理を停止できるようにする
     let shouldContinueProcessing = true;
-    
+
     // フレーム処理ループ内の進捗更新部分を修正
     const processFrame = async () => {
       if (!shouldContinueProcessing || !isVideoAnalyzing) {
         console.log('処理中断');
         return;
       }
-      
+
       if (isProcessingFrame) {
         console.log('前のフレームをまだ処理中です');
         setTimeout(processFrame, frameProcessingInterval);
         return;
       }
-      
+
       isProcessingFrame = true;
       const videoElement = uploadedVideoRef.current;
-      
+
       if (!videoElement) {
         console.error('ビデオ要素が見つかりません');
         return;
       }
-      
+
       try {
         // 現在のフレームをキャンバスに描画
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-        
+
         // MediaPipeモデルに送信
         if (holisticRef.current) {
           try {
             await holisticRef.current.send({image: canvas});
             // フレーム処理成功時にカウントを増やす
             videoAnalysisFrameCountRef.current++;
-            
+
             // 進捗状況の計算と更新（より直接的な方法）
             const currentPosition = videoElement.currentTime;
             const totalDuration = videoElement.duration;
@@ -1047,7 +1047,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
             const estimatedRemaining = progressPercent > 0
               ? Math.round((elapsedTime / 1000) * ((100 - progressPercent) / progressPercent))
               : Math.round(totalDuration);
-            
+
             // 状態を直接更新（前の状態を使わず完全に新しい状態を設定）
             setStats({
               framesProcessed: videoAnalysisFrameCountRef.current,
@@ -1056,7 +1056,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
               progress: Math.round(progressPercent),
               estimatedTimeRemaining: Math.max(0, estimatedRemaining)
             });
-            
+
             // デバッグログ（重要な情報を常に出力）
             console.log(`進捗状況[直接更新]:`, {
               現在位置: `${currentPosition.toFixed(2)}秒`,
@@ -1070,16 +1070,16 @@ const SimpleMotionAnalyzer: React.FC = () => {
             console.warn('Holistic送信エラー:', e);
           }
         }
-        
+
         // 動画の終了チェック
         if (videoElement.currentTime >= videoElement.duration - 0.1) {
           console.log('動画分析が完了しました');
-          
+
           // 状態をリセット
           shouldContinueProcessing = false;
           isProcessingFrame = false;
           setIsVideoAnalyzing(false);
-          
+
           // 自動ダウンロードを有効化
           shouldAutoDownloadRef.current = true;
           console.log('自動ダウンロードを有効化しました');
@@ -1093,14 +1093,14 @@ const SimpleMotionAnalyzer: React.FC = () => {
               alert('分析が完了しました。「録画開始」ボタンをクリックして録画を開始してください。');
             }
           }, 500);
-          
+
           return;
         }
-        
+
         // 次のフレームに進める（固定のステップサイズ）
         const frameStep = 1 / 24; // 約24fps
         videoElement.currentTime += frameStep;
-        
+
         // シーク完了を待機（より確実な方法）
         await new Promise<void>(resolve => {
           const targetTime = videoElement.currentTime;
@@ -1114,26 +1114,26 @@ const SimpleMotionAnalyzer: React.FC = () => {
           };
           checkSeek();
         });
-        
+
         // 次のフレーム処理をスケジュール
         isProcessingFrame = false;
         setTimeout(processFrame, frameProcessingInterval);
-        
+
       } catch (error) {
         // 型安全な方法でエラーを処理
         console.error('フレーム処理エラー:', error);
         isProcessingFrame = false;
-        
+
         // エラーが発生しても処理を継続
         setTimeout(processFrame, frameProcessingInterval);
       }
     };
-    
+
     // 処理開始
     console.log('フレーム処理を開始します');
     videoElement.currentTime = 0; // 必ず0から開始
     processFrame();
-    
+
     // グローバル変数へのアクセスを安全に
     if (typeof window !== 'undefined') {
       // 定期的に統計情報を更新するインターバル（バックアップとして）
@@ -1159,11 +1159,11 @@ const SimpleMotionAnalyzer: React.FC = () => {
       console.error('キャンバスが見つかりません');
       return;
     }
-    
+
     try {
       // キャンバスから画像データを取得
       const dataUrl = canvasRef.current.toDataURL('image/png');
-      
+
       // ダウンロード用のリンクを作成
       const a = document.createElement('a');
       a.href = dataUrl;
@@ -1171,7 +1171,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      
+
       alert('スナップショットを保存しました！');
     } catch (error) {
       console.error('スナップショットの保存に失敗しました:', error);
@@ -1186,39 +1186,39 @@ const SimpleMotionAnalyzer: React.FC = () => {
       alert('キャンバスまたは動画が見つかりません');
       return;
     }
-    
+
     try {
       // 既存のダウンロード関連情報をクリア
       setRecordedChunks([]);
       setOutputVideoUrl(null);
-      
+
       // 動画の再生位置を先頭に戻す
       uploadedVideoRef.current.currentTime = 0;
-      
+
       // 録画設定
       const canvas = canvasRef.current;
       const stream = canvas.captureStream(30); // 30fpsで録画
-      
+
       // MediaRecorderのオプション設定
       const options = { mimeType: 'video/webm;codecs=vp9', videoBitsPerSecond: 5000000 };
       const mediaRecorder = new MediaRecorder(stream, options);
-      
+
       // データ収集用の配列
       const chunks: Blob[] = [];
-      
+
       // データが利用可能になったら収集
       mediaRecorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) {
           chunks.push(e.data);
         }
       };
-      
+
       // 録画が完了したら動画をダウンロード
       mediaRecorder.onstop = () => {
         // 動画の生成
         const blob = new Blob(chunks, { type: 'video/webm' });
         const url = URL.createObjectURL(blob);
-        
+
         // ダウンロードリンクを生成して自動的にクリック
         const a = document.createElement('a');
         a.href = url;
@@ -1226,14 +1226,14 @@ const SimpleMotionAnalyzer: React.FC = () => {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        
+
         alert('録画が完了し、動画がダウンロードされました！');
       };
-      
+
       // 動画を再生
       const videoElement = uploadedVideoRef.current;
       videoElement.play();
-      
+
       // ランドマークの処理と描画を開始
       const ctx = canvas.getContext('2d');
       const processFrame = async () => {
@@ -1242,12 +1242,12 @@ const SimpleMotionAnalyzer: React.FC = () => {
             // フレームをキャンバスに描画
             ctx?.clearRect(0, 0, canvas.width, canvas.height);
             ctx?.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-            
+
             // MediaPipeで解析
             if (holisticRef.current) {
               await holisticRef.current.send({ image: canvas });
             }
-            
+
             // 次のフレームを処理
             requestAnimationFrame(processFrame);
           } else if (videoElement.ended) {
@@ -1261,19 +1261,19 @@ const SimpleMotionAnalyzer: React.FC = () => {
           requestAnimationFrame(processFrame);
         }
       };
-      
+
       // mediaRecorderRef に現在のレコーダーを保存
       mediaRecorderRef.current = mediaRecorder;
-      
+
       // 録画を開始
       mediaRecorder.start(100); // 100msごとにデータを収集
-      
+
       // フレーム処理を開始
       processFrame();
-      
+
       // ユーザーに録画開始を通知
       alert('ランドマーク付き動画の録画を開始します。動画が終了すると自動的にダウンロードされます。');
-      
+
     } catch (error) {
       console.error('録画の開始に失敗しました:', error);
       alert('録画の開始に失敗しました。ブラウザがこの機能をサポートしていない可能性があります。');
@@ -1317,11 +1317,11 @@ const SimpleMotionAnalyzer: React.FC = () => {
   useEffect(() => {
     if (outputVideoUrl && shouldAutoDownloadRef.current) {
       console.log('outputVideoUrlが設定されました。ダウンロードを試行します:', outputVideoUrl);
-      
+
       // タイムアウトを設定して、ダウンロードを試行
       const downloadTimer = setTimeout(() => {
         console.log('タイマーによるダウンロード開始');
-        
+
         // 直接aタグを作成してダウンロード
         const a = document.createElement('a');
         a.href = outputVideoUrl;
@@ -1329,10 +1329,10 @@ const SimpleMotionAnalyzer: React.FC = () => {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        
+
         console.log('ダウンロードリンクをクリックしました');
       }, 1500);
-      
+
       return () => clearTimeout(downloadTimer);
     }
   }, [outputVideoUrl, downloadVideo, analysisMode]);
@@ -1348,34 +1348,27 @@ const SimpleMotionAnalyzer: React.FC = () => {
     });
   }, []);
 
-  
+  // 処理済み動画をダウンロードする関数
+  const downloadProcessedVideo = async (videoUrl: string) => {
+    try {
+      const response = await fetch(videoUrl);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `motion-analysis-${new Date().toISOString().slice(0, 10)}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('ダウンロードエラー:', error);
+      alert('ダウンロードに失敗しました');
+    }
+  };
 
-  // 動画分析の停止
-  const stopVideoAnalysis = useCallback(() => {
-    console.log('動画分析を停止します');
-    
-    // アニメーションフレームをキャンセル
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
-    
-    // インターバルタイマーをクリア
-    if (videoProcessingIntervalIdRef.current) {
-      clearInterval(videoProcessingIntervalIdRef.current);
-      videoProcessingIntervalIdRef.current = undefined;
-    }
-    
-    // 動画を停止
-    if (uploadedVideoRef.current) {
-      uploadedVideoRef.current.pause();
-    }
-    
-    setIsVideoAnalyzing(false);
-    console.log('動画分析を停止しました');
-  }, []);
 
-  // メインの処理ループ（アップロード動画の分析と自動録画）
+  // 分析モードでの動画処理
   const processVideo = useCallback(async () => {
     if (!uploadedVideoRef.current || !canvasRef.current || !holisticRef.current) {
       console.error('必要なリソースが見つかりません');
@@ -1466,7 +1459,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
     if (!files || files.length === 0) return;
 
     const file = files[0];
-    
+
     // ファイルサイズチェック（例: 500MB）
     const maxSize = 500 * 1024 * 1024;
     if (file.size > maxSize) {
@@ -1508,7 +1501,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
         URL.revokeObjectURL(outputVideoUrl);
         setOutputVideoUrl(null);
       }
-      
+
       // 自動ダウンロードフラグをリセット
       shouldAutoDownloadRef.current = false;
 
@@ -1520,7 +1513,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
       // ビデオの読み込みと初期化
       if (uploadedVideoRef.current) {
         const videoElement = uploadedVideoRef.current;
-        
+
         // メタデータ読み込み完了を待つ
         await new Promise<void>((resolve, reject) => {
           videoElement.onloadedmetadata = () => resolve();
@@ -1570,10 +1563,10 @@ const SimpleMotionAnalyzer: React.FC = () => {
       }
       stopRenderLoop();
     }
-    
+
     // モード切り替え
     setAnalysisMode(mode);
-    
+
     // 必要に応じてリソースをクリーンアップ
     if (holisticRef.current) {
       try {
@@ -1584,7 +1577,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
       holisticRef.current = null;
       setIsInitialized(false);
     }
-    
+
     // 統計リセット
     frameCountRef.current = 0;
     startTimeRef.current = 0;
@@ -1598,7 +1591,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
       <Card className="shadow-lg bg-white dark:bg-gray-850 border-gray-200 dark:border-gray-800 overflow-hidden">
         <CardHeader className="border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900">
           <CardTitle className="text-xl font-bold text-gray-900 dark:text-gray-100 flex items-center">
-            <Film className="mr-2 h-5 w-5 text-primary" /> 
+            <Film className="mr-2 h-5 w-5 text-primary" />
             モーション分析ツール
           </CardTitle>
         </CardHeader>
@@ -1606,15 +1599,15 @@ const SimpleMotionAnalyzer: React.FC = () => {
           <Tabs defaultValue={analysisMode} onValueChange={(value: string) => setAnalysisMode(value as AnalysisMode)} className="w-full">
             <div className="px-4 pt-4 border-b border-gray-200 dark:border-gray-800">
               <TabsList className="bg-gray-100 dark:bg-gray-800 grid w-full grid-cols-2 h-10 rounded-md">
-                <TabsTrigger 
-                  value="camera" 
+                <TabsTrigger
+                  value="camera"
                   className="rounded-sm data-[state=active]:bg-white dark:data-[state=active]:bg-gray-700 flex items-center justify-center"
                 >
                   <CameraIcon className="mr-2 h-4 w-4" />
                   カメラモード
                 </TabsTrigger>
-                <TabsTrigger 
-                  value="video" 
+                <TabsTrigger
+                  value="video"
                   className="rounded-sm data-[state=active]:bg-white dark:data-[state=active]:bg-gray-700 flex items-center justify-center"
                 >
                   <Video className="mr-2 h-4 w-4" />
@@ -1636,7 +1629,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button 
+                          <Button
                             size="default"
                             variant={isInitialized ? "destructive" : "default"}
                             onClick={() => {
@@ -1681,7 +1674,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button 
+                          <Button
                             size="default"
                             variant="secondary"
                             onClick={switchCamera}
@@ -1702,7 +1695,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Button 
+                            <Button
                               size="default"
                               variant={isTorchOn ? 'destructive' : 'outline'}
                               onClick={toggleTorch}
@@ -1722,7 +1715,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button 
+                          <Button
                             size="default"
                             variant="outline"
                             onClick={isRecording ? stopRecording : startRecording}
@@ -1747,7 +1740,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button 
+                          <Button
                             size="default"
                             variant="ghost"
                             onClick={toggleFullscreen}
@@ -1766,8 +1759,8 @@ const SimpleMotionAnalyzer: React.FC = () => {
                   </div>
                 </div>
       </div>
-      
-              <div 
+
+              <div
                 ref={cameraContainerRef}
                 className={[
                   'relative bg-black rounded-md overflow-hidden',
@@ -1779,7 +1772,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                     <Loader2 className="h-8 w-8 animate-spin text-white" />
                   </div>
                 )}
-                
+
                 <div className="absolute inset-0">
             <video
               ref={videoRef}
@@ -1791,7 +1784,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
             />
             <canvas
               ref={canvasRef}
-                    className="absolute top-0 left-0 w-full h-full z-10 pointer-events-none" 
+                    className="absolute top-0 left-0 w-full h-full z-10 pointer-events-none"
             />
                 </div>
 
@@ -1801,7 +1794,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                   </Button>
                 </div>
           </div>
-          
+
               {processingStatus !== 'idle' && (
                 <div className="mt-4 bg-gray-50 dark:bg-gray-900 rounded-md p-4 border border-gray-200 dark:border-gray-800">
                   <div className="flex flex-col space-y-2">
@@ -1817,8 +1810,8 @@ const SimpleMotionAnalyzer: React.FC = () => {
                         FPS: {processingProgress.fps.toFixed(1)}
                       </div>
                       <div className="text-xs text-gray-600 dark:text-gray-400 text-right">
-                        残り時間: {processingProgress.estimatedTimeRemaining > 0 
-                          ? `${Math.round(processingProgress.estimatedTimeRemaining)}秒` 
+                        残り時間: {processingProgress.estimatedTimeRemaining > 0
+                          ? `${Math.round(processingProgress.estimatedTimeRemaining)}秒`
                           : '計算中...'}
                       </div>
                     </div>
@@ -1835,7 +1828,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                         保存またはプレビューが可能です
                       </p>
                     </div>
-                    <Button 
+                    <Button
                       size="sm"
                       variant="default"
               onClick={downloadVideo}
@@ -1884,7 +1877,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                     <Loader2 className="h-8 w-8 animate-spin text-white" />
         </div>
       )}
-      
+
                 <div className="relative w-full h-full">
             <video
               ref={uploadedVideoRef}
@@ -1894,7 +1887,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
             />
             <canvas
               ref={canvasRef}
-                    className="absolute top-0 left-0 w-full h-full z-10" 
+                    className="absolute top-0 left-0 w-full h-full z-10"
                   />
                 </div>
 
@@ -1922,8 +1915,8 @@ const SimpleMotionAnalyzer: React.FC = () => {
                         フレーム: {processingProgress.currentFrame} / {processingProgress.totalFrames}
                 </div>
                       <div className="text-xs text-gray-600 dark:text-gray-400 text-right">
-                        残り時間: {processingProgress.estimatedTimeRemaining > 0 
-                          ? `${Math.round(processingProgress.estimatedTimeRemaining)}秒` 
+                        残り時間: {processingProgress.estimatedTimeRemaining > 0
+                          ? `${Math.round(processingProgress.estimatedTimeRemaining)}秒`
                           : '計算中...'}
                 </div>
               </div>
@@ -1933,7 +1926,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                     <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
                       <div className="flex justify-between items-center">
                         <span className="text-sm font-medium text-gray-700 dark:text-gray-300">処理が完了しました</span>
-                        <Button 
+                        <Button
                           size="sm"
                           variant="default"
                           onClick={downloadVideo}
@@ -1947,7 +1940,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
             )}
           </div>
               )}
-              
+
               {/* ビデオモードでも録画結果を表示 */}
               {(outputVideoUrl || (!isRecording && recordedChunks.length > 0)) && (
                 <div className="mt-4 bg-gray-50 dark:bg-gray-900 rounded-md p-4 border border-gray-200 dark:border-gray-800">
@@ -1959,7 +1952,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                       </p>
                     </div>
                     <div className="flex gap-2">
-                      <Button 
+                      <Button
                         size="sm"
                         variant="default"
                         onClick={downloadVideo}
@@ -1968,7 +1961,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                         <Download className="mr-2 h-4 w-4" />
                         ダウンロード
                       </Button>
-                      <Button 
+                      <Button
                         size="sm"
                         variant="secondary"
                         onClick={exportHighQuality60fps}
@@ -1986,7 +1979,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                   <div className="flex flex-col space-y-3">
                     <div className="flex justify-between items-center">
                       <span className="text-base font-medium text-gray-900 dark:text-gray-100">処理完了</span>
-                      <Button 
+                      <Button
                         size="sm"
                         variant="default"
                         onClick={downloadVideo}
@@ -2003,9 +1996,9 @@ const SimpleMotionAnalyzer: React.FC = () => {
                       自動ダウンロード: {shouldAutoDownloadRef.current ? '有効' : '無効'}
                     </div>
                     {!outputVideoUrl && (
-                      <Button 
-                        size="sm" 
-                        variant="outline" 
+                      <Button
+                        size="sm"
+                        variant="outline"
                         onClick={startRecording}
                         className="mt-2"
                       >
@@ -2058,7 +2051,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                 <p className="text-sm text-gray-600 dark:text-gray-400">処理された動画をダウンロードする</p>
               </div>
               <div className="flex gap-2">
-                <Button 
+                <Button
                   variant="default"
                   onClick={downloadVideo}
                   size="lg"
@@ -2067,7 +2060,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                   <Download className="mr-2 h-5 w-5" />
                   今すぐダウンロード
                 </Button>
-                <Button 
+                <Button
                   variant="secondary"
                   onClick={exportHighQuality60fps}
                   size="lg"
@@ -2084,4 +2077,4 @@ const SimpleMotionAnalyzer: React.FC = () => {
   );
 };
 
-export default SimpleMotionAnalyzer; 
+export default SimpleMotionAnalyzer;
