@@ -1365,7 +1365,27 @@ const SimpleMotionAnalyzer: React.FC = () => {
       stopRenderLoop();
     } else if (analysisMode === 'video') {
       if (isVideoAnalyzing) {
-        stopVideoAnalysis();
+        // 動画分析を停止
+        const processor = frameProcessorRef.current;
+        processor.shouldStop = true;
+        processor.isProcessing = false;
+
+        if (analysisTimerIdRef.current) {
+          clearInterval(analysisTimerIdRef.current);
+          analysisTimerIdRef.current = undefined;
+        }
+        if (videoProcessingIntervalIdRef.current) {
+          clearInterval(videoProcessingIntervalIdRef.current);
+          videoProcessingIntervalIdRef.current = undefined;
+        }
+
+        if (uploadedVideoRef.current) {
+          uploadedVideoRef.current.pause();
+          uploadedVideoRef.current.currentTime = 0;
+        }
+
+        setIsVideoAnalyzing(false);
+        setProcessingStatus('idle');
       }
       stopRenderLoop();
     }
@@ -1390,7 +1410,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
     videoAnalysisStartTimeRef.current = 0;
     videoAnalysisFrameCountRef.current = 0;
     resetStats();
-  }, [analysisMode, isRecording, stopRecording, isVideoAnalyzing, stopVideoAnalysis, resetStats, stopRenderLoop]);
+  }, [analysisMode, isRecording, stopRecording, isVideoAnalyzing, resetStats, stopRenderLoop]);
 
   // 動画アップロード処理
   const handleVideoUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1703,7 +1723,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
                       動画ファイルをアップロードして分析を行います
                     </p>
           </div>
-                  <div className="flex">
+                  <div className="flex gap-2">
                     <Button
                       variant="outline"
                       size="sm"
@@ -1719,6 +1739,28 @@ const SimpleMotionAnalyzer: React.FC = () => {
                       <Upload className="mr-2 h-4 w-4" />
                       ビデオ選択
                     </Button>
+                    {uploadedVideoUrl && isVideoReady && !isVideoAnalyzing && (
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={startVideoAnalysis}
+                        className="min-w-[120px]"
+                      >
+                        <Play className="mr-2 h-4 w-4" />
+                        分析開始
+                      </Button>
+                    )}
+                    {isVideoAnalyzing && (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={stopVideoAnalysis}
+                        className="min-w-[120px]"
+                      >
+                        <Pause className="mr-2 h-4 w-4" />
+                        分析停止
+                      </Button>
+                    )}
                   </div>
                 </div>
               </div>
