@@ -1951,70 +1951,58 @@ export const SimpleMotionAnalyzer: React.FC = () => {
           </div>
               )}
 
-              {/* ビデオモードでも録画結果を表示 */}
-              {(outputVideoUrl || (!isRecording && recordedChunks.length > 0)) && (
-                <div className="mt-4 bg-gray-50 dark:bg-gray-900 rounded-md p-4 border border-gray-200 dark:border-gray-800">
-                  <div className="flex flex-col sm:flex-row justify-between items-center space-y-4 sm:space-y-0">
-                    <div className="flex-1">
-                      <h3 className="text-base font-medium text-gray-900 dark:text-gray-100">録画結果</h3>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
+              {/* ビデオ処理完了時の保存ボタン - 大きく目立つように */}
+              {processingStatus === 'completed' && (
+                <div className="mt-4 bg-green-50 dark:bg-green-900/20 rounded-lg p-6 border-2 border-green-500 dark:border-green-700">
+                  <div className="flex flex-col items-center space-y-4">
+                    <div className="text-center">
+                      <h3 className="text-xl font-bold text-green-800 dark:text-green-300 mb-2">
+                        ✓ 処理が完了しました！
+                      </h3>
+                      <p className="text-sm text-green-700 dark:text-green-400">
                         ランドマーク付き動画をダウンロードできます
                       </p>
                     </div>
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="default"
-                        onClick={downloadVideo}
-                        className="min-w-[120px]"
-                      >
-                        <Download className="mr-2 h-4 w-4" />
-                        ダウンロード
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={exportHighQuality60fps}
-                        className="min-w-[160px]"
-                      >
-                        60fps高画質出力
-                      </Button>
+                    <Button
+                      size="lg"
+                      variant="default"
+                      onClick={downloadVideo}
+                      className="bg-green-600 hover:bg-green-700 text-white font-bold text-lg px-8 py-6 min-w-[250px]"
+                    >
+                      <Download className="mr-3 h-6 w-6" />
+                      動画を保存する
+                    </Button>
+                    <div className="text-xs text-green-600 dark:text-green-400 text-center">
+                      <p>処理フレーム数: {stats.framesProcessed}</p>
+                      <p>処理時間: {stats.elapsedTime}秒</p>
                     </div>
-            </div>
-          </div>
+                  </div>
+                </div>
               )}
-              {/* デバッグ情報とダウンロードボタン */}
-              {processingStatus === 'completed' && (
-                <div className="mt-4 bg-gray-50 dark:bg-gray-900 rounded-md p-4 border border-gray-200 dark:border-gray-800">
-                  <div className="flex flex-col space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="text-base font-medium text-gray-900 dark:text-gray-100">処理完了</span>
-                      <Button
-                        size="sm"
-                        variant="default"
-                        onClick={downloadVideo}
-                        className="min-w-[120px]"
-                      >
-                        <Download className="mr-2 h-4 w-4" />
-                        ダウンロード
-                      </Button>
-            </div>
-                    <div className="text-xs text-gray-600 dark:text-gray-400">
-                      URL状態: {outputVideoUrl ? '設定済み' : '未設定'}
-                    </div>
-                    <div className="text-xs text-gray-600 dark:text-gray-400">
-                      自動ダウンロード: {shouldAutoDownloadRef.current ? '有効' : '無効'}
-                    </div>
-                    {!outputVideoUrl && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={startRecording}
-                        className="mt-2"
-                      >
-                        録画を再試行
-                      </Button>
-                    )}
+
+              {/* 処理中は録画開始ボタンを表示 */}
+              {processingStatus === 'processing' && !isRecording && (
+                <div className="mt-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border border-blue-500 dark:border-blue-700">
+                  <div className="flex flex-col items-center space-y-3">
+                    <p className="text-sm text-blue-700 dark:text-blue-300 text-center">
+                      動画の解析が完了したら、録画を開始してください
+                    </p>
+                    <Button
+                      size="default"
+                      variant="default"
+                      onClick={startRecording}
+                      disabled={isRecording}
+                      className="min-w-[180px]"
+                    >
+                      {isRecording ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          録画中...
+                        </>
+                      ) : (
+                        <>録画開始</>
+                      )}
+                    </Button>
                   </div>
                 </div>
               )}
