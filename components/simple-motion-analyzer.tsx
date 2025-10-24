@@ -1240,7 +1240,26 @@ const SimpleMotionAnalyzer: React.FC = () => {
       clearInterval(videoProcessingIntervalIdRef.current);
       videoProcessingIntervalIdRef.current = undefined;
     }
-  }, []);
+    // カメラとHolisticもクリーンアップ
+    if (cameraRef.current) {
+      cameraRef.current.stop();
+      cameraRef.current = null;
+    }
+    if (holisticRef.current) {
+      holisticRef.current.close();
+      holisticRef.current = null;
+    }
+    // MediaRecorderも停止
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    // VideoStreamのトラックも停止
+    if (videoStream) {
+      videoStream.getTracks().forEach(track => track.stop());
+    }
+    // Animation Frameも停止
+    stopRenderLoop();
+  }, [stopRenderLoop, videoStream]);
 
   // コンポーネントのアンマウント時にクリーンアップ
   useEffect(() => {
@@ -1301,6 +1320,83 @@ const SimpleMotionAnalyzer: React.FC = () => {
     }
   };
 
+  // 動画分析を停止する関数
+  const stopVideoAnalysis = useCallback(() => {
+    console.log('動画分析を停止します');
+
+    // 処理フラグを停止
+    const processor = frameProcessorRef.current;
+    processor.shouldStop = true;
+    processor.isProcessing = false;
+
+    // タイマーをクリア
+    if (analysisTimerIdRef.current) {
+      clearInterval(analysisTimerIdRef.current);
+      analysisTimerIdRef.current = undefined;
+    }
+    if (videoProcessingIntervalIdRef.current) {
+      clearInterval(videoProcessingIntervalIdRef.current);
+      videoProcessingIntervalIdRef.current = undefined;
+    }
+
+    // 動画を停止
+    if (uploadedVideoRef.current) {
+      uploadedVideoRef.current.pause();
+      uploadedVideoRef.current.currentTime = 0;
+    }
+
+    // 状態をリセット
+    setIsVideoAnalyzing(false);
+    setProcessingStatus('idle');
+
+    console.log('動画分析を停止しました');
+  }, []);
+
+  // 動画アップロード処理
+  const handleVideoUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    console.log('動画ファイルを選択しました:', file.name);
+
+    // 既存の動画をクリア
+    if (uploadedVideoUrl) {
+      URL.revokeObjectURL(uploadedVideoUrl);
+    }
+
+    // 新しい動画URLを作成
+    const url = URL.createObjectURL(file);
+    setUploadedVideoUrl(url);
+    setUploadedVideo(file);
+    setIsVideoReady(false);
+
+    // 動画要素にURLを設定
+    if (uploadedVideoRef.current) {
+      uploadedVideoRef.current.src = url;
+
+      // メタデータ読み込み完了時の処理
+      uploadedVideoRef.current.onloadedmetadata = async () => {
+        const videoElement = uploadedVideoRef.current;
+        if (!videoElement || !canvasRef.current) return;
+
+        console.log('動画メタデータ読み込み完了');
+
+        // キャンバスサイズを動画に合わせる
+        canvasRef.current.width = videoElement.videoWidth;
+        canvasRef.current.height = videoElement.videoHeight;
+
+        // Holisticを初期化
+        const success = await initHolistic();
+        if (success) {
+          setIsVideoReady(true);
+          console.log('動画の準備が完了しました');
+          // レンダーループを開始
+          startRenderLoop();
+        }
+      };
+    }
+  }, [uploadedVideoUrl, initHolistic, startRenderLoop]);
+
 
   // 分析モードの切り替えを修正
   const switchMode = useCallback((mode: AnalysisMode) => {
@@ -1340,7 +1436,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
     videoAnalysisStartTimeRef.current = 0;
     videoAnalysisFrameCountRef.current = 0;
     resetStats();
-  }, [analysisMode, isRecording, stopRecording, isVideoAnalyzing, stopVideoAnalysis, resetStats]);
+  }, [analysisMode, isRecording, stopRecording, isVideoAnalyzing, stopVideoAnalysis, resetStats, stopRenderLoop]);
 
   return (
     <div className="w-full">
@@ -1352,7 +1448,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <Tabs defaultValue={analysisMode} onValueChange={(value: string) => setAnalysisMode(value as AnalysisMode)} className="w-full">
+          <Tabs defaultValue={analysisMode} onValueChange={(value: string) => switchMode(value as AnalysisMode)} className="w-full">
             <div className="px-4 pt-4 border-b border-gray-200 dark:border-gray-800">
               <TabsList className="bg-gray-100 dark:bg-gray-800 grid w-full grid-cols-2 h-10 rounded-md">
                 <TabsTrigger
