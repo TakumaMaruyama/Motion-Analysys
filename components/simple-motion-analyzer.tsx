@@ -817,7 +817,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
 
         if (blob.size === 0) {
           console.error('[onstop] 作成されたBlobのサイズが0です');
-         setIsRecording(false); 
+         setIsRecording(false);
           alert('録画データが空です。ブラウザの互換性の問題かもしれません。');
           return;
         }
@@ -1320,7 +1320,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
     }
   };
 
-  // 動画分析を停止する関数
+  // 動画分析を停止する関数（switchModeより前に定義）
   const stopVideoAnalysis = useCallback(() => {
     console.log('動画分析を停止します');
 
