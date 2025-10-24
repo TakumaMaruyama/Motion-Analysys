@@ -540,133 +540,67 @@ const SimpleMotionAnalyzer: React.FC = () => {
     }
   }, [isTorchOn]);
 
-  // 録画した動画をダウンロード
+  // 録画した動画をダウンロード（スマホ対応版）
   const downloadVideo = useCallback(() => {
     console.log('[downloadVideo] 開始');
-    console.log('[downloadVideo] 状態確認:', {
-      outputVideoUrl: outputVideoUrl ? 'あり' : 'なし',
-      recordedChunks: recordedChunks.length,
-      recordedMimeType
-    });
+    
+    let videoUrl = outputVideoUrl;
+    let mimeType = recordedMimeType || 'video/webm';
 
-    if (!outputVideoUrl) {
-      console.error('[downloadVideo] ダウンロードするURLがありません');
-
-      // データはあるがURLが未設定の場合の回復処理
-      if (recordedChunks.length > 0) {
-        console.log(`[downloadVideo] outputVideoUrlがないが、recordedChunks(${recordedChunks.length}個)からBlobを作成`);
-        try {
-          // 適切なMIMEタイプを推測
-          let mimeType = 'video/webm';
-          if (recordedMimeType) {
-            mimeType = recordedMimeType;
-          } else if (recordedChunks[0]?.type) {
-            mimeType = recordedChunks[0].type;
-          }
-
-          console.log(`[downloadVideo] 推測されたMIMEタイプ: ${mimeType}`);
-          const blob = new Blob(recordedChunks, { type: mimeType });
-          console.log(`[downloadVideo] 回復Blob作成完了: size=${blob.size}, type=${blob.type}`);
-
-          if (blob.size > 0) {
-            const tempUrl = URL.createObjectURL(blob);
-            console.log('[downloadVideo] 一時URL作成:', tempUrl);
-
-            // outputVideoUrlを設定（将来の使用のため）
-            setOutputVideoUrl(tempUrl);
-            setRecordedMimeType(mimeType);
-
-            // 一時URLを使用してダウンロード
-            const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
-            const a = document.createElement('a');
-            a.href = tempUrl;
-            a.download = `motion-analysis-${new Date().toISOString().replace(/:/g, '-')}.${extension}`;
-            a.style.display = 'none';
-            document.body.appendChild(a);
-
-            console.log('[downloadVideo] ダウンロードリンクをクリック');
-            a.click();
-
-            // クリーンアップ
-            setTimeout(() => {
-              document.body.removeChild(a);
-              // URL.revokeObjectURL(tempUrl); // 再利用できるように保持
-              console.log('[downloadVideo] リンク要素を削除');
-            }, 100);
-
-            console.log('[downloadVideo] 回復処理でダウンロード完了');
-            return;
-          } else {
-            console.error('[downloadVideo] 回復Blobのサイズが0です');
-            alert('エラー: 録画データが破損しています。録画をやり直してください。');
-          }
-        } catch (e) {
-          console.error('[downloadVideo] 回復処理中にエラー:', e);
-          alert('エラー: 録画データの回復中に問題が発生しました。');
+    // URLがない場合は作成
+    if (!videoUrl && recordedChunks.length > 0) {
+      console.log(`[downloadVideo] URLを作成中...`);
+      try {
+        if (recordedChunks[0]?.type) {
+          mimeType = recordedChunks[0].type;
         }
-      } else {
-        console.error('[downloadVideo] 録画データがありません');
-        // 録画が正しく開始されるようにする
-        if (canvasRef.current && !isRecording && analysisMode === 'video') {
-          console.log('[downloadVideo] 録画データがないためユーザーに録画を促します');
-          alert('録画データがありません。まず「録画開始」ボタンをクリックして、動画を録画してください。');
-          return;
-        } else {
-          alert('エラー: ダウンロードする録画データがありません。録画を先に行ってください。');
+        const blob = new Blob(recordedChunks, { type: mimeType });
+        if (blob.size > 0) {
+          videoUrl = URL.createObjectURL(blob);
+          setOutputVideoUrl(videoUrl);
+          setRecordedMimeType(mimeType);
         }
+      } catch (e) {
+        console.error('[downloadVideo] Blob作成エラー:', e);
+        alert('エラー: 動画データの準備に失敗しました。');
+        return;
       }
+    }
+
+    if (!videoUrl) {
+      alert('ダウンロードする動画がありません。先に録画を行ってください。');
       return;
     }
 
-    console.log('[downloadVideo] 通常のダウンロード処理開始 URL:', outputVideoUrl);
-
-    // MIMEタイプから拡張子を決定
-    let extension = 'webm'; // デフォルト
-    let determinedMimeType = recordedMimeType; // ステートから取得
-
-    console.log(`[downloadVideo] MIMEタイプ: ${determinedMimeType}, 録画チャンク数: ${recordedChunks.length}`);
-
-    // recordedMimeType がなければ recordedChunks から推測
-    if (!determinedMimeType && recordedChunks.length > 0 && recordedChunks[0]?.type) {
-         determinedMimeType = recordedChunks[0].type;
-      console.log(`[downloadVideo] recordedMimeType がないため、Blobタイプ ${determinedMimeType} から推測`);
-    }
-
-    if (determinedMimeType) {
-        if (determinedMimeType.includes('mp4')) {
-            extension = 'mp4';
-        } else if (determinedMimeType.includes('webm')) {
-            extension = 'webm';
-        }
-      console.log(`[downloadVideo] MIMEタイプ ${determinedMimeType} から拡張子 ${extension} を特定`);
-    } else {
-      console.warn('[downloadVideo] MIMEタイプを特定できませんでした。デフォルトの拡張子 .webm を使用します。');
-    }
-
+    // スマホ対応: 新しいタブで開く
     try {
-      // ダウンロードリンクを作成して自動クリック
-    const a = document.createElement('a');
-    a.href = outputVideoUrl;
-    a.download = `motion-analysis-${new Date().toISOString().replace(/:/g, '-')}.${extension}`;
-      a.style.display = 'none'; // 非表示
-    document.body.appendChild(a);
-
-      console.log('[downloadVideo] ダウンロードリンクをクリック');
-    a.click();
-
-      // クリーンアップ
-      setTimeout(() => {
-    document.body.removeChild(a);
-        console.log('[downloadVideo] リンク要素を削除');
-        // URL.revokeObjectURL(outputVideoUrl); // ここでは破棄しない（再ダウンロード用）
-      }, 100);
-
-      console.log('[downloadVideo] ダウンロード処理完了');
+      const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
+      const filename = `motion-analysis-${new Date().toISOString().replace(/:/g, '-')}.${extension}`;
+      
+      // モバイルの場合は新しいウィンドウで開く
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      
+      if (isMobile) {
+        // モバイル: 新しいタブで動画を開く（長押しで保存可能）
+        window.open(videoUrl, '_blank');
+        alert('動画を新しいタブで開きました。動画を長押しして「保存」を選択してください。');
+      } else {
+        // デスクトップ: 通常のダウンロード
+        const a = document.createElement('a');
+        a.href = videoUrl;
+        a.download = filename;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => document.body.removeChild(a), 100);
+      }
+      
+      console.log('[downloadVideo] 完了');
     } catch (e) {
-      console.error('[downloadVideo] ダウンロード処理中にエラー:', e);
-      alert('動画のダウンロード中にエラーが発生しました。ブラウザの設定を確認してください。');
+      console.error('[downloadVideo] エラー:', e);
+      alert('動画のダウンロード中にエラーが発生しました。');
     }
-  }, [outputVideoUrl, recordedMimeType, recordedChunks, canvasRef, isRecording, analysisMode]);
+  }, [outputVideoUrl, recordedMimeType, recordedChunks]);
 
   // 録画停止
   const stopRecording = useCallback(() => {
@@ -1852,24 +1786,24 @@ const SimpleMotionAnalyzer: React.FC = () => {
               )}
 
               {(outputVideoUrl || (!isRecording && recordedChunks.length > 0)) && (
-                <div className="mt-4 bg-gray-50 dark:bg-gray-900 rounded-md p-4 border border-gray-200 dark:border-gray-800">
-                  <div className="flex flex-col sm:flex-row justify-between items-center space-y-4 sm:space-y-0">
+                <div className="mt-4 bg-green-50 dark:bg-green-900/20 rounded-md p-4 border-2 border-green-500 dark:border-green-600">
+                  <div className="flex flex-col space-y-3">
                     <div className="flex-1">
-                      <h3 className="text-base font-medium text-gray-900 dark:text-gray-100">録画結果</h3>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        保存またはプレビューが可能です
+                      <h3 className="text-lg font-bold text-green-900 dark:text-green-100">✓ 録画完了</h3>
+                      <p className="text-sm text-green-700 dark:text-green-300 mt-1">
+                        スマホの場合: ボタンをタップして動画を開き、長押しで保存してください
                       </p>
                     </div>
                     <Button
-                      size="sm"
+                      size="lg"
                       variant="default"
-              onClick={downloadVideo}
-                      className="min-w-[120px]"
-            >
-                      <Download className="mr-2 h-4 w-4" />
-              ダウンロード
+                      onClick={downloadVideo}
+                      className="w-full bg-green-600 hover:bg-green-700 text-white font-bold text-base py-6"
+                    >
+                      <Download className="mr-2 h-5 w-5" />
+                      動画を保存する
                     </Button>
-          </div>
+                  </div>
                 </div>
               )}
             </TabsContent>
@@ -1975,35 +1909,25 @@ const SimpleMotionAnalyzer: React.FC = () => {
 
               {/* ビデオモードでも録画結果を表示 */}
               {(outputVideoUrl || (!isRecording && recordedChunks.length > 0)) && (
-                <div className="mt-4 bg-gray-50 dark:bg-gray-900 rounded-md p-4 border border-gray-200 dark:border-gray-800">
-                  <div className="flex flex-col sm:flex-row justify-between items-center space-y-4 sm:space-y-0">
+                <div className="mt-4 bg-green-50 dark:bg-green-900/20 rounded-md p-4 border-2 border-green-500 dark:border-green-600">
+                  <div className="flex flex-col space-y-3">
                     <div className="flex-1">
-                      <h3 className="text-base font-medium text-gray-900 dark:text-gray-100">録画結果</h3>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        ランドマーク付き動画をダウンロードできます
+                      <h3 className="text-lg font-bold text-green-900 dark:text-green-100">✓ 録画完了</h3>
+                      <p className="text-sm text-green-700 dark:text-green-300 mt-1">
+                        スマホの場合: ボタンをタップして動画を開き、長押しで保存してください
                       </p>
                     </div>
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="default"
-                        onClick={downloadVideo}
-                        className="min-w-[120px]"
-                      >
-                        <Download className="mr-2 h-4 w-4" />
-                        ダウンロード
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={exportHighQuality60fps}
-                        className="min-w-[160px]"
-                      >
-                        60fps高画質出力
-                      </Button>
-                    </div>
-            </div>
-          </div>
+                    <Button
+                      size="lg"
+                      variant="default"
+                      onClick={downloadVideo}
+                      className="w-full bg-green-600 hover:bg-green-700 text-white font-bold text-base py-6"
+                    >
+                      <Download className="mr-2 h-5 w-5" />
+                      動画を保存する
+                    </Button>
+                  </div>
+                </div>
               )}
               {/* デバッグ情報とダウンロードボタン */}
               {processingStatus === 'completed' && (
@@ -2073,38 +1997,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* 常に表示されるダウンロードボタン */}
-      {(outputVideoUrl || (!isRecording && recordedChunks.length > 0)) && (
-        <Card className="mt-4 shadow-sm bg-white dark:bg-gray-850 border-gray-200 dark:border-gray-800">
-          <CardContent className="p-4">
-            <div className="flex justify-between items-center">
-              <div>
-                <h3 className="text-base font-medium text-gray-900 dark:text-gray-100">動画のダウンロード</h3>
-                <p className="text-sm text-gray-600 dark:text-gray-400">処理された動画をダウンロードする</p>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="default"
-                  onClick={downloadVideo}
-                  size="lg"
-                  className="bg-green-600 hover:bg-green-700 text-white font-bold"
-                >
-                  <Download className="mr-2 h-5 w-5" />
-                  今すぐダウンロード
-                </Button>
-                <Button
-                  variant="secondary"
-                  onClick={exportHighQuality60fps}
-                  size="lg"
-                  className="font-bold"
-                >
-                  60fps高画質出力
-                </Button>
-              </div>
-          </div>
-          </CardContent>
-        </Card>
-      )}
+      
     </div>
   );
 };
