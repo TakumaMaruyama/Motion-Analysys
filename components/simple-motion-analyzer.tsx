@@ -540,7 +540,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
     }
   }, [isTorchOn]);
 
-  // 録画した動画をダウンロード
+  // 録画した動画をダウンロード（モバイル対応）
   const downloadVideo = useCallback(() => {
     console.log('[downloadVideo] 開始');
     console.log('[downloadVideo] 状態確認:', {
@@ -552,119 +552,102 @@ const SimpleMotionAnalyzer: React.FC = () => {
     if (!outputVideoUrl) {
       console.error('[downloadVideo] ダウンロードするURLがありません');
 
-      // データはあるがURLが未設定の場合の回復処理
       if (recordedChunks.length > 0) {
-        console.log(`[downloadVideo] outputVideoUrlがないが、recordedChunks(${recordedChunks.length}個)からBlobを作成`);
+        console.log(`[downloadVideo] recordedChunks(${recordedChunks.length}個)からBlobを作成`);
         try {
-          // 適切なMIMEタイプを推測
-          let mimeType = 'video/webm';
+          let mimeType = 'video/mp4'; // デフォルトをMP4に変更
           if (recordedMimeType) {
             mimeType = recordedMimeType;
           } else if (recordedChunks[0]?.type) {
             mimeType = recordedChunks[0].type;
           }
 
-          console.log(`[downloadVideo] 推測されたMIMEタイプ: ${mimeType}`);
+          console.log(`[downloadVideo] MIMEタイプ: ${mimeType}`);
           const blob = new Blob(recordedChunks, { type: mimeType });
-          console.log(`[downloadVideo] 回復Blob作成完了: size=${blob.size}, type=${blob.type}`);
+          console.log(`[downloadVideo] Blob作成完了: size=${blob.size}, type=${blob.type}`);
 
           if (blob.size > 0) {
             const tempUrl = URL.createObjectURL(blob);
-            console.log('[downloadVideo] 一時URL作成:', tempUrl);
-
-            // outputVideoUrlを設定（将来の使用のため）
             setOutputVideoUrl(tempUrl);
             setRecordedMimeType(mimeType);
 
-            // 一時URLを使用してダウンロード
             const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
-            const a = document.createElement('a');
-            a.href = tempUrl;
-            a.download = `motion-analysis-${new Date().toISOString().replace(/:/g, '-')}.${extension}`;
-            a.style.display = 'none';
-            document.body.appendChild(a);
+            
+            // モバイル対応: 直接ダウンロードと新しいタブでの開くの両方を試行
+            const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+            
+            if (isMobile) {
+              // モバイルの場合: 新しいタブで開く
+              window.open(tempUrl, '_blank');
+              alert('動画が新しいタブで開かれました。長押しして保存してください。');
+            } else {
+              // デスクトップの場合: 通常のダウンロード
+              const a = document.createElement('a');
+              a.href = tempUrl;
+              a.download = `motion-analysis-${new Date().toISOString().replace(/:/g, '-')}.${extension}`;
+              a.style.display = 'none';
+              document.body.appendChild(a);
+              a.click();
+              setTimeout(() => document.body.removeChild(a), 100);
+            }
 
-            console.log('[downloadVideo] ダウンロードリンクをクリック');
-            a.click();
-
-            // クリーンアップ
-            setTimeout(() => {
-              document.body.removeChild(a);
-              // URL.revokeObjectURL(tempUrl); // 再利用できるように保持
-              console.log('[downloadVideo] リンク要素を削除');
-            }, 100);
-
-            console.log('[downloadVideo] 回復処理でダウンロード完了');
+            console.log('[downloadVideo] 完了');
             return;
           } else {
-            console.error('[downloadVideo] 回復Blobのサイズが0です');
-            alert('エラー: 録画データが破損しています。録画をやり直してください。');
+            console.error('[downloadVideo] Blobのサイズが0です');
+            alert('エラー: 録画データが破損しています');
           }
         } catch (e) {
-          console.error('[downloadVideo] 回復処理中にエラー:', e);
-          alert('エラー: 録画データの回復中に問題が発生しました。');
+          console.error('[downloadVideo] エラー:', e);
+          alert('エラー: 録画データの処理中に問題が発生しました');
         }
       } else {
         console.error('[downloadVideo] 録画データがありません');
-        // 録画が正しく開始されるようにする
-        if (canvasRef.current && !isRecording && analysisMode === 'video') {
-          console.log('[downloadVideo] 録画データがないためユーザーに録画を促します');
-          alert('録画データがありません。まず「録画開始」ボタンをクリックして、動画を録画してください。');
-          return;
-        } else {
-          alert('エラー: ダウンロードする録画データがありません。録画を先に行ってください。');
-        }
+        alert('録画データがありません。まず録画を開始してください');
       }
       return;
     }
 
-    console.log('[downloadVideo] 通常のダウンロード処理開始 URL:', outputVideoUrl);
+    console.log('[downloadVideo] 通常のダウンロード処理開始');
 
-    // MIMEタイプから拡張子を決定
-    let extension = 'webm'; // デフォルト
-    let determinedMimeType = recordedMimeType; // ステートから取得
+    let extension = 'mp4'; // デフォルトをMP4に
+    let determinedMimeType = recordedMimeType;
 
-    console.log(`[downloadVideo] MIMEタイプ: ${determinedMimeType}, 録画チャンク数: ${recordedChunks.length}`);
-
-    // recordedMimeType がなければ recordedChunks から推測
     if (!determinedMimeType && recordedChunks.length > 0 && recordedChunks[0]?.type) {
-         determinedMimeType = recordedChunks[0].type;
-      console.log(`[downloadVideo] recordedMimeType がないため、Blobタイプ ${determinedMimeType} から推測`);
+      determinedMimeType = recordedChunks[0].type;
     }
 
     if (determinedMimeType) {
-        if (determinedMimeType.includes('mp4')) {
-            extension = 'mp4';
-        } else if (determinedMimeType.includes('webm')) {
-            extension = 'webm';
-        }
-      console.log(`[downloadVideo] MIMEタイプ ${determinedMimeType} から拡張子 ${extension} を特定`);
-    } else {
-      console.warn('[downloadVideo] MIMEタイプを特定できませんでした。デフォルトの拡張子 .webm を使用します。');
+      if (determinedMimeType.includes('mp4')) {
+        extension = 'mp4';
+      } else if (determinedMimeType.includes('webm')) {
+        extension = 'webm';
+      }
+      console.log(`[downloadVideo] 拡張子: ${extension}`);
     }
 
     try {
-      // ダウンロードリンクを作成して自動クリック
-    const a = document.createElement('a');
-    a.href = outputVideoUrl;
-    a.download = `motion-analysis-${new Date().toISOString().replace(/:/g, '-')}.${extension}`;
-      a.style.display = 'none'; // 非表示
-    document.body.appendChild(a);
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      
+      if (isMobile) {
+        // モバイル: 新しいタブで開く
+        window.open(outputVideoUrl, '_blank');
+        alert('動画が新しいタブで開かれました。長押しして「ビデオを保存」を選択してください。');
+      } else {
+        // デスクトップ: ダウンロード
+        const a = document.createElement('a');
+        a.href = outputVideoUrl;
+        a.download = `motion-analysis-${new Date().toISOString().replace(/:/g, '-')}.${extension}`;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => document.body.removeChild(a), 100);
+      }
 
-      console.log('[downloadVideo] ダウンロードリンクをクリック');
-    a.click();
-
-      // クリーンアップ
-      setTimeout(() => {
-    document.body.removeChild(a);
-        console.log('[downloadVideo] リンク要素を削除');
-        // URL.revokeObjectURL(outputVideoUrl); // ここでは破棄しない（再ダウンロード用）
-      }, 100);
-
-      console.log('[downloadVideo] ダウンロード処理完了');
+      console.log('[downloadVideo] 完了');
     } catch (e) {
-      console.error('[downloadVideo] ダウンロード処理中にエラー:', e);
-      alert('動画のダウンロード中にエラーが発生しました。ブラウザの設定を確認してください。');
+      console.error('[downloadVideo] エラー:', e);
+      alert('動画のダウンロード中にエラーが発生しました');
     }
   }, [outputVideoUrl, recordedMimeType, recordedChunks, canvasRef, isRecording, analysisMode]);
 
@@ -796,14 +779,15 @@ const SimpleMotionAnalyzer: React.FC = () => {
 
       console.log('[startRecording] キャンバスからストリームを取得します');
       const captureFps = Math.min(Math.max(15, Math.round(originalFrameRate || 30)), 30);
-      const stream = canvasRef.current.captureStream(captureFps); // 安定したFPSでキャプチャ
+      const stream = canvasRef.current.captureStream(captureFps);
 
-      // サポートされているMIMEタイプを確認
+      // モバイル対応: MP4を優先、次にWebM
       const supportedTypes = [
+        'video/mp4',
+        'video/webm;codecs=h264', // H.264コーデック付きWebM
         'video/webm;codecs=vp9',
         'video/webm;codecs=vp8',
-        'video/webm',
-        'video/mp4'
+        'video/webm'
       ];
 
       let mimeType = '';
@@ -824,7 +808,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
       // MediaRecorderの設定
       const options = {
         mimeType,
-        videoBitsPerSecond: 5000000 // 5Mbps に増加してブロックノイズを軽減
+        videoBitsPerSecond: 5000000
       };
 
       console.log('[startRecording] MediaRecorderを初期化します', options);
@@ -837,7 +821,6 @@ const SimpleMotionAnalyzer: React.FC = () => {
           chunks.push(event.data);
           console.log(`[ondataavailable] ローカルchunks配列に追加: 現在${chunks.length}個`);
 
-          // React状態を更新
           setRecordedChunks(prevChunks => {
             const newChunks = [...prevChunks, event.data];
             console.log(`[ondataavailable] React状態のrecordedChunksを更新: ${prevChunks.length}→${newChunks.length}個`);
@@ -850,63 +833,53 @@ const SimpleMotionAnalyzer: React.FC = () => {
 
       // 録画が停止したときのイベントハンドラ
       mediaRecorder.onstop = () => {
-        console.log(`[onstop] 録画停止 - ローカルchunks: ${chunks.length}個, recordedChunks: ${recordedChunks.length}個`);
-
-        // デバッグ用に実際のチャンクをログ出力
-        chunks.forEach((chunk, index) => {
-          console.log(`[onstop] チャンク #${index}: サイズ=${chunk.size} bytes, タイプ=${chunk.type}`);
-        });
+        console.log(`[onstop] 録画停止 - ローカルchunks: ${chunks.length}個`);
 
         if (chunks.length === 0) {
           console.error('[onstop] ローカルchunksが空です');
-
-          // recordedChunksを確認
           if (recordedChunks.length > 0) {
-            console.log(`[onstop] recordedChunksには${recordedChunks.length}個のチャンクがあります。これを使用します。`);
-            // recordedChunksを使用してBlobを作成
+            console.log(`[onstop] recordedChunksを使用します`);
             const blob = new Blob(recordedChunks, { type: mimeType });
-            console.log(`[onstop] recordedChunksからBlobを作成: サイズ=${blob.size} bytes`);
+            console.log(`[onstop] Blobを作成: サイズ=${blob.size} bytes`);
             const videoUrl = URL.createObjectURL(blob);
             setOutputVideoUrl(videoUrl);
-              setRecordedMimeType(mimeType);
+            setRecordedMimeType(mimeType);
             } else {
-            console.error('[onstop] recordedChunksも空です。録画データがありません。');
-            alert('録画データが取得できませんでした。ブラウザの設定を確認してください。');
+            console.error('[onstop] recordedChunksも空です');
+            alert('録画データが取得できませんでした');
           }
-             setIsRecording(false);
+          setIsRecording(false);
           return;
         }
 
-        // Blobを作成してURLを生成
+        // Blobを作成（MP4の場合は特別な処理）
         const blob = new Blob(chunks, { type: mimeType });
         console.log(`[onstop] Blobを作成: サイズ=${blob.size} bytes, タイプ=${blob.type}`);
 
         if (blob.size === 0) {
-          console.error('[onstop] 作成されたBlobのサイズが0です');
-         setIsRecording(false); 
-          alert('録画データが空です。ブラウザの互換性の問題かもしれません。');
+          console.error('[onstop] Blobのサイズが0です');
+          setIsRecording(false); 
+          alert('録画データが空です');
           return;
         }
 
         const videoUrl = URL.createObjectURL(blob);
         console.log(`[onstop] URL生成: ${videoUrl}`);
 
-        // React状態を更新
         setOutputVideoUrl(videoUrl);
         setRecordedMimeType(mimeType);
-        setRecordedChunks(chunks); // ローカルchunksで最終的に更新
+        setRecordedChunks(chunks);
         setIsRecording(false);
 
-        console.log('[onstop] 録画完了 - 状態更新完了');
+        console.log('[onstop] 録画完了');
       };
 
-      // MediaRecorderを開始
       mediaRecorderRef.current = mediaRecorder;
-      mediaRecorder.start(100); // 100msごとにデータチャンクを取得（頻度を上げる）
+      mediaRecorder.start(100);
       setIsRecording(true);
-      console.log('[startRecording] 録画を開始しました (チャンク間隔: 100ms)');
+      console.log('[startRecording] 録画を開始しました');
 
-      // HQエクスポート用のフレーム収集を開始
+      // HQエクスポート用のフレーム収集
       if (canvasRef.current) {
         capturedFramesRef.current = [];
         const ctx = canvasRef.current.getContext('2d');
@@ -929,8 +902,6 @@ const SimpleMotionAnalyzer: React.FC = () => {
           }, intervalMs);
         }
       }
-
-      // 自動停止は行わない（ユーザー操作で停止）
 
     } catch (error) {
       console.error('[startRecording] エラー:', error);
