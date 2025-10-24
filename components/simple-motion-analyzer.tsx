@@ -1352,6 +1352,46 @@ const SimpleMotionAnalyzer: React.FC = () => {
     console.log('動画分析を停止しました');
   }, []);
 
+  // 分析モードの切り替えを修正
+  const switchMode = useCallback((mode: AnalysisMode) => {
+    // 現在の処理を停止
+    if (analysisMode === 'camera') {
+      if (isRecording) {
+        stopRecording();
+      }
+      if (cameraRef.current) {
+        cameraRef.current.stop();
+      }
+      stopRenderLoop();
+    } else if (analysisMode === 'video') {
+      if (isVideoAnalyzing) {
+        stopVideoAnalysis();
+      }
+      stopRenderLoop();
+    }
+
+    // モード切り替え
+    setAnalysisMode(mode);
+
+    // 必要に応じてリソースをクリーンアップ
+    if (holisticRef.current) {
+      try {
+        holisticRef.current.close();
+      } catch (e) {
+        console.error("Holistic終了エラー:", e);
+      }
+      holisticRef.current = null;
+      setIsInitialized(false);
+    }
+
+    // 統計リセット
+    frameCountRef.current = 0;
+    startTimeRef.current = 0;
+    videoAnalysisStartTimeRef.current = 0;
+    videoAnalysisFrameCountRef.current = 0;
+    resetStats();
+  }, [analysisMode, isRecording, stopRecording, isVideoAnalyzing, stopVideoAnalysis, resetStats, stopRenderLoop]);
+
   // 動画アップロード処理
   const handleVideoUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1397,46 +1437,6 @@ const SimpleMotionAnalyzer: React.FC = () => {
     }
   }, [uploadedVideoUrl, initHolistic, startRenderLoop]);
 
-
-  // 分析モードの切り替えを修正
-  const switchMode = useCallback((mode: AnalysisMode) => {
-    // 現在の処理を停止
-    if (analysisMode === 'camera') {
-      if (isRecording) {
-        stopRecording();
-      }
-      if (cameraRef.current) {
-        cameraRef.current.stop();
-      }
-      stopRenderLoop();
-    } else if (analysisMode === 'video') {
-      if (isVideoAnalyzing) {
-        stopVideoAnalysis();
-      }
-      stopRenderLoop();
-    }
-
-    // モード切り替え
-    setAnalysisMode(mode);
-
-    // 必要に応じてリソースをクリーンアップ
-    if (holisticRef.current) {
-      try {
-        holisticRef.current.close();
-      } catch (e) {
-        console.error("Holistic終了エラー:", e);
-      }
-      holisticRef.current = null;
-      setIsInitialized(false);
-    }
-
-    // 統計リセット
-    frameCountRef.current = 0;
-    startTimeRef.current = 0;
-    videoAnalysisStartTimeRef.current = 0;
-    videoAnalysisFrameCountRef.current = 0;
-    resetStats();
-  }, [analysisMode, isRecording, stopRecording, isVideoAnalyzing, stopVideoAnalysis, resetStats, stopRenderLoop]);
 
   return (
     <div className="w-full">
