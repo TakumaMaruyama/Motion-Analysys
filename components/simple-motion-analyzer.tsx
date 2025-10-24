@@ -939,6 +939,35 @@ const SimpleMotionAnalyzer: React.FC = () => {
     }
   }, [canvasRef, isRecording, recordedChunks]);
 
+  // 動画分析の停止処理
+  const stopVideoAnalysis = useCallback(() => {
+    if (!isVideoAnalyzing) return;
+    
+    console.log('動画分析を停止します');
+    
+    // フレーム処理を停止
+    const processor = frameProcessorRef.current;
+    processor.shouldStop = true;
+    processor.isProcessing = false;
+    
+    // インターバルをクリア
+    if (videoProcessingIntervalIdRef.current) {
+      clearInterval(videoProcessingIntervalIdRef.current);
+      videoProcessingIntervalIdRef.current = undefined;
+    }
+    
+    // 動画を一時停止
+    if (uploadedVideoRef.current) {
+      uploadedVideoRef.current.pause();
+    }
+    
+    // 状態をリセット
+    setIsVideoAnalyzing(false);
+    setProcessingStatus('idle');
+    
+    console.log('動画分析を停止しました');
+  }, [isVideoAnalyzing]);
+
   // 動画分析の開始処理
   const startVideoAnalysis = useCallback(() => {
     if (!uploadedVideoRef.current || !canvasRef.current) {
