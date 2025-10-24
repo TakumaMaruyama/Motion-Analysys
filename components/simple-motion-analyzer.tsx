@@ -655,48 +655,107 @@ export const SimpleMotionAnalyzer: React.FC = () => {
       console.log(`[downloadVideo] デバイス判定: ${isMobile ? 'モバイル' : 'デスクトップ'}, iOS: ${isIOS}`);
 
       if (isIOS) {
-        // iOS: videoタグを使って表示し、長押し保存を促す
+        // iOS: videoタグを使って表示し、長押し保存を促す（改善版）
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;overflow-y:auto;';
+        
+        const container = document.createElement('div');
+        container.style.cssText = 'width:100%;max-width:600px;display:flex;flex-direction:column;align-items:center;';
+        
+        const title = document.createElement('h2');
+        title.textContent = '動画を保存する方法';
+        title.style.cssText = 'color:white;font-size:24px;font-weight:bold;margin-bottom:20px;text-align:center;';
+        
+        const instruction = document.createElement('div');
+        instruction.style.cssText = 'color:white;font-size:16px;margin-bottom:20px;text-align:center;line-height:1.8;background:rgba(255,255,255,0.1);padding:20px;border-radius:10px;';
+        instruction.innerHTML = `
+          <p style="margin-bottom:15px;font-size:18px;font-weight:bold;color:#4ade80;">📱 iPhoneでの保存方法</p>
+          <p style="margin-bottom:10px;">1️⃣ 下の動画を<span style="color:#fbbf24;font-weight:bold;">長押し</span>してください</p>
+          <p style="margin-bottom:10px;">2️⃣ メニューから<span style="color:#fbbf24;font-weight:bold;">「ビデオを保存」</span>を選択</p>
+          <p style="margin-bottom:10px;">3️⃣ 写真アプリに保存されます✅</p>
+          <p style="margin-top:15px;font-size:14px;color:#d1d5db;">※ メニューが表示されない場合は、動画の中央部分を長押ししてください</p>
+        `;
+        
         const videoElement = document.createElement('video');
         videoElement.src = url;
         videoElement.controls = true;
-        videoElement.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);max-width:90%;max-height:90%;z-index:9999;background:black;';
-        
-        const overlay = document.createElement('div');
-        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:9998;display:flex;flex-direction:column;align-items:center;justify-content:center;';
-        
-        const instruction = document.createElement('div');
-        instruction.style.cssText = 'color:white;font-size:18px;margin-bottom:20px;text-align:center;padding:20px;';
-        instruction.innerHTML = '動画を長押しして<br/>「ビデオを保存」を選択してください';
+        videoElement.playsInline = true;
+        videoElement.style.cssText = 'width:100%;max-width:500px;margin:20px 0;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,0.5);';
         
         const closeButton = document.createElement('button');
         closeButton.textContent = '閉じる';
-        closeButton.style.cssText = 'margin-top:20px;padding:10px 30px;font-size:16px;background:white;border:none;border-radius:5px;cursor:pointer;';
+        closeButton.style.cssText = 'margin-top:20px;padding:12px 40px;font-size:18px;background:#ef4444;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:bold;box-shadow:0 2px 10px rgba(239,68,68,0.5);';
         closeButton.onclick = () => {
           document.body.removeChild(overlay);
           URL.revokeObjectURL(url);
         };
         
-        overlay.appendChild(instruction);
-        overlay.appendChild(videoElement);
-        overlay.appendChild(closeButton);
+        container.appendChild(title);
+        container.appendChild(instruction);
+        container.appendChild(videoElement);
+        container.appendChild(closeButton);
+        overlay.appendChild(container);
         document.body.appendChild(overlay);
         
       } else if (isMobile) {
-        // Android: 直接ダウンロードを試行
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `motion-analysis-${Date.now()}.webm`;
-        a.style.display = 'none';
-        document.body.appendChild(a);
-        a.click();
+        // Android: 複数の方法を試行
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;overflow-y:auto;';
         
-        // フォールバック: 新しいタブで開く
-        setTimeout(() => {
+        const container = document.createElement('div');
+        container.style.cssText = 'width:100%;max-width:600px;display:flex;flex-direction:column;align-items:center;';
+        
+        const title = document.createElement('h2');
+        title.textContent = '動画を保存する';
+        title.style.cssText = 'color:white;font-size:24px;font-weight:bold;margin-bottom:20px;text-align:center;';
+        
+        const instruction = document.createElement('div');
+        instruction.style.cssText = 'color:white;font-size:16px;margin-bottom:20px;text-align:center;line-height:1.8;background:rgba(255,255,255,0.1);padding:20px;border-radius:10px;';
+        instruction.innerHTML = `
+          <p style="margin-bottom:15px;font-size:18px;font-weight:bold;color:#4ade80;">📱 Androidでの保存方法</p>
+          <p style="margin-bottom:10px;">以下のボタンから保存してください</p>
+        `;
+        
+        const videoElement = document.createElement('video');
+        videoElement.src = url;
+        videoElement.controls = true;
+        videoElement.playsInline = true;
+        videoElement.style.cssText = 'width:100%;max-width:500px;margin:20px 0;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,0.5);';
+        
+        const downloadButton = document.createElement('a');
+        downloadButton.href = url;
+        downloadButton.download = `motion-analysis-${Date.now()}.webm`;
+        downloadButton.textContent = '📥 ダウンロード';
+        downloadButton.style.cssText = 'display:block;padding:15px 40px;font-size:18px;background:#10b981;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:bold;text-decoration:none;text-align:center;margin-bottom:10px;box-shadow:0 2px 10px rgba(16,185,129,0.5);';
+        
+        const openButton = document.createElement('button');
+        openButton.textContent = '🔗 新しいタブで開く';
+        openButton.style.cssText = 'padding:12px 40px;font-size:16px;background:#3b82f6;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:bold;margin-bottom:10px;box-shadow:0 2px 10px rgba(59,130,246,0.5);';
+        openButton.onclick = () => {
           window.open(url, '_blank');
-          document.body.removeChild(a);
-        }, 100);
+        };
         
-        alert('ダウンロードが開始されない場合は、新しいタブで開かれた動画を長押しして保存してください。');
+        const helpText = document.createElement('p');
+        helpText.textContent = '※ ダウンロードが始まらない場合は、「新しいタブで開く」から動画を長押しして保存してください';
+        helpText.style.cssText = 'color:#d1d5db;font-size:14px;text-align:center;margin:15px 0;';
+        
+        const closeButton = document.createElement('button');
+        closeButton.textContent = '閉じる';
+        closeButton.style.cssText = 'margin-top:10px;padding:12px 40px;font-size:16px;background:#ef4444;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:bold;box-shadow:0 2px 10px rgba(239,68,68,0.5);';
+        closeButton.onclick = () => {
+          document.body.removeChild(overlay);
+          URL.revokeObjectURL(url);
+        };
+        
+        container.appendChild(title);
+        container.appendChild(instruction);
+        container.appendChild(videoElement);
+        container.appendChild(downloadButton);
+        container.appendChild(openButton);
+        container.appendChild(helpText);
+        container.appendChild(closeButton);
+        overlay.appendChild(container);
+        document.body.appendChild(overlay);
         
       } else {
         // デスクトップ: 通常のダウンロード
