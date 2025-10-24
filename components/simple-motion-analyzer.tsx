@@ -543,7 +543,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
   // 録画した動画をダウンロード（スマホ対応版）
   const downloadVideo = useCallback(() => {
     console.log('[downloadVideo] 開始');
-    
+
     let videoUrl = outputVideoUrl;
     let mimeType = recordedMimeType || 'video/webm';
 
@@ -576,10 +576,10 @@ const SimpleMotionAnalyzer: React.FC = () => {
     try {
       const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
       const filename = `motion-analysis-${new Date().toISOString().replace(/:/g, '-')}.${extension}`;
-      
+
       // モバイルの場合は新しいウィンドウで開く
       const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-      
+
       if (isMobile) {
         // モバイル: 新しいタブで動画を開く（長押しで保存可能）
         window.open(videoUrl, '_blank');
@@ -594,7 +594,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
         a.click();
         setTimeout(() => document.body.removeChild(a), 100);
       }
-      
+
       console.log('[downloadVideo] 完了');
     } catch (e) {
       console.error('[downloadVideo] エラー:', e);
@@ -1302,216 +1302,6 @@ const SimpleMotionAnalyzer: React.FC = () => {
   };
 
 
-  // 動画分析を停止する関数
-  const stopVideoAnalysis = useCallback(() => {
-    console.log('動画分析を停止します');
-    
-    // 処理フラグを停止
-    const processor = frameProcessorRef.current;
-    processor.shouldStop = true;
-    processor.isProcessing = false;
-    
-    // タイマーをクリア
-    if (analysisTimerIdRef.current) {
-      clearInterval(analysisTimerIdRef.current);
-      analysisTimerIdRef.current = undefined;
-    }
-    if (videoProcessingIntervalIdRef.current) {
-      clearInterval(videoProcessingIntervalIdRef.current);
-      videoProcessingIntervalIdRef.current = undefined;
-    }
-    
-    // 動画を停止
-    if (uploadedVideoRef.current) {
-      uploadedVideoRef.current.pause();
-      uploadedVideoRef.current.currentTime = 0;
-    }
-    
-    // 状態をリセット
-    setIsVideoAnalyzing(false);
-    setProcessingStatus('idle');
-    
-    console.log('動画分析を停止しました');
-  }, []);
-
-  // 分析モードでの動画処理
-  const processVideo = useCallback(async () => {
-    if (!uploadedVideoRef.current || !canvasRef.current || !holisticRef.current) {
-      console.error('必要なリソースが見つかりません');
-      setProcessingStatus('error');
-      return;
-    }
-
-    const videoElement = uploadedVideoRef.current;
-    const holistic = holisticRef.current;
-    const duration = isFinite(videoElement.duration) ? videoElement.duration : 0;
-
-    // 状態初期化
-    const processor = frameProcessorRef.current;
-    processor.isProcessing = true;
-    processor.shouldStop = false;
-    processor.currentTime = 0;
-    processor.processedFrames = 0;
-    processor.startTime = performance.now();
-    processor.lastUpdateTime = performance.now();
-
-    setProcessingStatus('processing');
-    updateProcessingProgress({ status: 'processing', progress: 0, currentFrame: 0, totalFrames: 0, fps: 0, elapsedTime: 0, estimatedTimeRemaining: Math.max(0, Math.round(duration)) });
-
-    // キャンバス録画を自動開始（出力動画生成のため）
-    try {
-      startRecording();
-    } catch (e) {
-      console.warn('自動録画開始に失敗しましたが処理は継続します:', e);
-    }
-
-    // 解析用ループ（過負荷を避けるために重複送信を防止）
-    let sending = false;
-    const targetFps = 24; // 処理用のターゲットFPS
-    const intervalMs = Math.max(10, Math.round(1000 / targetFps));
-
-    const intervalId = setInterval(async () => {
-      if (processor.shouldStop) return;
-      if (!uploadedVideoRef.current || !holisticRef.current) return;
-      if (videoElement.paused || videoElement.ended) return;
-      if (sending) return;
-
-      try {
-        sending = true;
-        await holistic.send({ image: videoElement });
-        processor.processedFrames += 1;
-
-        // 進捗更新
-        const cur = videoElement.currentTime;
-        const total = videoElement.duration || duration || 1;
-        const elapsedMs = performance.now() - processor.startTime;
-        const fps = processor.processedFrames / Math.max(0.001, elapsedMs / 1000);
-        const progress = Math.min(100, Math.max(0, (cur / total) * 100));
-        const eta = progress > 0 ? (elapsedMs / 1000) * ((100 - progress) / progress) : Math.round(total);
-        updateProcessingProgress({ status: 'processing', progress: Math.round(progress), currentFrame: processor.processedFrames, fps: Math.round(fps), elapsedTime: Math.round(elapsedMs / 1000), estimatedTimeRemaining: Math.max(0, Math.round(eta)) });
-      } catch (e) {
-        console.warn('holistic.send エラー:', e);
-      } finally {
-        sending = false;
-      }
-    }, intervalMs);
-
-    // 再生と完了処理
-    const handleEnded = () => {
-      try {
-        processor.shouldStop = true;
-        clearInterval(intervalId);
-        setProcessingStatus('completed');
-        updateProcessingProgress({ status: 'completed', progress: 100 });
-      } finally {
-        // 録画停止（出力URLは onstop ハンドラで生成される）
-        stopRecording();
-        videoElement.removeEventListener('ended', handleEnded);
-      }
-    };
-
-    videoElement.addEventListener('ended', handleEnded, { once: true });
-    try {
-      videoElement.currentTime = 0;
-      await videoElement.play();
-    } catch (e) {
-      console.error('動画の自動再生に失敗しました。ユーザー操作が必要です:', e);
-    }
-  }, [startRecording, stopRecording, updateProcessingProgress]);
-
-  // 動画アップロード処理
-  const handleVideoUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
-
-    const file = files[0];
-
-    // ファイルサイズチェック（例: 500MB）
-    const maxSize = 500 * 1024 * 1024;
-    if (file.size > maxSize) {
-      alert('ファイルサイズが大きすぎます（最大500MB）');
-      return;
-    }
-
-    // 対応フォーマットチェック
-    const supportedFormats = ['video/mp4', 'video/webm', 'video/quicktime'];
-    if (!supportedFormats.includes(file.type)) {
-      alert('対応していないファイル形式です（MP4, WebM, MOVに対応）');
-      return;
-    }
-
-    try {
-      // 処理状態をリセット
-      setProcessingStatus('loading');
-      updateProcessingProgress({
-        status: 'loading',
-        progress: 0,
-        currentFrame: 0,
-        totalFrames: 0,
-        fps: 0,
-        elapsedTime: 0,
-        estimatedTimeRemaining: 0
-      });
-
-      // 既存のリソースをクリーンアップ
-      if (isVideoAnalyzing) {
-        stopVideoAnalysis();
-      }
-      if (isRecording) {
-        stopRecording();
-      }
-      if (uploadedVideoUrl) {
-        URL.revokeObjectURL(uploadedVideoUrl);
-      }
-      if (outputVideoUrl) {
-        URL.revokeObjectURL(outputVideoUrl);
-        setOutputVideoUrl(null);
-      }
-
-      // 自動ダウンロードフラグをリセット
-      shouldAutoDownloadRef.current = false;
-
-      // 新しいビデオURLを作成
-      const url = URL.createObjectURL(file);
-      setUploadedVideoUrl(url);
-      setUploadedVideo(file);
-
-      // ビデオの読み込みと初期化
-      if (uploadedVideoRef.current) {
-        const videoElement = uploadedVideoRef.current;
-
-        // メタデータ読み込み完了を待つ
-        await new Promise<void>((resolve, reject) => {
-          videoElement.onloadedmetadata = () => resolve();
-          videoElement.onerror = () => reject(new Error('ビデオの読み込みに失敗しました'));
-          videoElement.src = url;
-        });
-
-        // キャンバスの設定
-        if (canvasRef.current) {
-          canvasRef.current.width = videoElement.videoWidth;
-          canvasRef.current.height = videoElement.videoHeight;
-        }
-
-        // Holisticの初期化
-        await initHolistic();
-
-        // 処理開始
-        setIsVideoReady(true);
-        setIsVideoAnalyzing(true);
-        startRenderLoop();
-        processVideo(); // startVideoAnalysisの代わりにprocessVideoを使用
-      }
-    } catch (error) {
-      console.error('動画アップロードエラー:', error);
-      setProcessingStatus('error');
-      updateProcessingProgress({
-        status: 'error',
-        error: '動画の準備中にエラーが発生しました'
-      });
-    }
-  }, [isVideoAnalyzing, isRecording, stopVideoAnalysis, stopRecording, initHolistic, updateProcessingProgress, processVideo]);
-
   // 分析モードの切り替えを修正
   const switchMode = useCallback((mode: AnalysisMode) => {
     // 現在の処理を停止
@@ -1997,7 +1787,7 @@ const SimpleMotionAnalyzer: React.FC = () => {
         </CardContent>
       </Card>
 
-      
+
     </div>
   );
 };
