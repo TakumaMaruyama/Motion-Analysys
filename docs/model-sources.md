@@ -22,6 +22,12 @@ the same origin. Production code must not fall back to a CDN. When replacing
 the model, update the bundled artifact, expected byte size, SHA-256, model ID,
 this record, and `THIRD_PARTY_NOTICES.md` together.
 
+The production Web Worker is emitted as an ES module and explicitly selects
+MediaPipe's module loader. Only
+`vision_wasm_module_internal.js` and
+`vision_wasm_module_internal.wasm` are distributed. Current Chrome and Safari,
+the v1 supported browsers, provide the required WebAssembly SIMD support.
+
 The model produces 33 image landmarks, visibility values, and estimated world
 landmarks. World landmarks are useful for orientation only. They must not be
 presented as calibrated centimetres, metres, or high-accuracy 3D measurement.

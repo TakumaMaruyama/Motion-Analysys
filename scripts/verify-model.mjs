@@ -11,12 +11,8 @@ const EXPECTED_SIZE_BYTES = 9_398_198;
 const EXPECTED_SHA256 =
   "4eaa5eb7a98365221087693fcc286334cf0858e2eb6e15b506aa4a7ecdcec4ad";
 const RUNTIME_WASM_FILES = [
-  "vision_wasm_internal.js",
-  "vision_wasm_internal.wasm",
   "vision_wasm_module_internal.js",
   "vision_wasm_module_internal.wasm",
-  "vision_wasm_nosimd_internal.js",
-  "vision_wasm_nosimd_internal.wasm",
 ];
 const PUBLIC_WASM_URL = new URL("../public/mediapipe/wasm/", import.meta.url);
 const PACKAGE_WASM_URL = new URL(
@@ -95,7 +91,7 @@ async function verifyRuntimeAssets() {
   }
 
   console.log(
-    `Verified ${expectedFiles.length} self-hosted MediaPipe WASM assets against @mediapipe/tasks-vision@1.0.0`,
+    `Verified ${expectedFiles.length} self-hosted MediaPipe module WASM assets against @mediapipe/tasks-vision@1.0.0`,
   );
 }
 

@@ -68,7 +68,7 @@ npx playwright install
 | `npm run dev` | 開発サーバーをポート3000で起動 |
 | `npm run build` | Sites／Cloudflare Workers向けの本番ビルド |
 | `npm run start` | 本番ビルドをポート3000でローカル起動 |
-| `npm run verify:model` | 同梱モデルのサイズ／SHA-256と、WASM 6ファイルのruntime一致を検証 |
+| `npm run verify:model` | 同梱モデルのサイズ／SHA-256と、利用するmodule版WASM 2ファイルのruntime一致を検証 |
 | `npm run typecheck` | TypeScriptの型検査 |
 | `npm run lint` | ESLint |
 | `npm run test` | 単体テスト |
