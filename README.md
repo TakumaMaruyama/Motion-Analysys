@@ -49,6 +49,7 @@ MotionAnalysysは、カメラ映像または手元の動画から、スポーツ
 git clone https://github.com/TakumaMaruyama/Motion-Analysys.git
 cd Motion-Analysys
 npm ci
+npm run assets:prepare
 npm run verify:model
 npm run dev
 ```
@@ -65,6 +66,7 @@ npx playwright install
 
 | コマンド | 内容 |
 | --- | --- |
+| `npm run assets:prepare` | 固定した公式配布元からモデルを取得し、利用するWASMをruntime packageから自己ホスト領域へ配置 |
 | `npm run dev` | 開発サーバーをポート3000で起動 |
 | `npm run build` | Sites／Cloudflare Workers向けの本番ビルド |
 | `npm run start` | 本番ビルドをポート3000でローカル起動 |
@@ -142,7 +144,7 @@ MediaPipe Pose Landmarker Fullが返す33点の画像座標とvisibilityを使�
 
 ## モデル
 
-本番では、公式のMediaPipe Pose Landmarker Fullを自己ホストして使用します。WASMとモデルに外部CDNへのフォールバックはありません。
+本番では、公式のMediaPipe Pose Landmarker Fullを自己ホストして使用します。ビルド時に固定generationから取得してサイズとSHA-256を検証し、WASMも固定したruntime packageと一致するものだけを公開物へ配置します。実行時に外部CDNへのフォールバックはありません。
 
 | 項目 | 値 |
 | --- | --- |

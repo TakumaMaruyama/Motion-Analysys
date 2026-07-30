@@ -17,9 +17,11 @@ local-only pose estimation in the browser.
 | License | Apache License 2.0 |
 | Model card | `https://storage.googleapis.com/mediapipe-assets/Model%20Card%20BlazePose%20GHUM%203D.pdf` |
 
-The application must load its checked-in model and MediaPipe WASM assets from
-the same origin. Production code must not fall back to a CDN. When replacing
-the model, update the bundled artifact, expected byte size, SHA-256, model ID,
+The application must load its prepared model and MediaPipe WASM assets from the
+same origin. `npm run assets:prepare` materializes these deployment assets
+from the immutable model URL and the locked runtime package before a build,
+then verifies their hashes. The deployed browser never falls back to a CDN.
+When replacing the model, update the expected byte size, SHA-256, model ID,
 this record, and `THIRD_PARTY_NOTICES.md` together.
 
 The production Web Worker is emitted as an ES module and explicitly selects
