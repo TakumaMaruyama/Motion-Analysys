@@ -14,6 +14,7 @@ import type {
   PoseLandmarks,
   PoseWorldLandmarks,
 } from "../types/analysis";
+import { assertSinglePoseCount } from "../lib/pose/quality";
 
 const WASM_BASE_PATH = "/mediapipe/wasm";
 const MODEL_ASSET_PATH = "/models/pose_landmarker_full.task";
@@ -86,7 +87,8 @@ async function initialize(): Promise<void> {
       },
       canvas: new OffscreenCanvas(1, 1),
       runningMode: "VIDEO",
-      numPoses: 1,
+      // 解析対象は1人だが、2人目を検知して品質不良として止めるため2枠使う。
+      numPoses: 2,
       minPoseDetectionConfidence: MINIMUM_CONFIDENCE,
       minPosePresenceConfidence: MINIMUM_CONFIDENCE,
       minTrackingConfidence: MINIMUM_CONFIDENCE,
@@ -140,6 +142,7 @@ function copyPoseResult(
   timestampMs: number,
   imageSize: { readonly width: number; readonly height: number },
 ): PoseFrame | null {
+  assertSinglePoseCount(result.landmarks.length);
   const pose = result.landmarks[0];
   if (!pose) {
     return null;

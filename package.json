@@ -18,12 +18,14 @@
     "test:e2e": "playwright test",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "benchmark:check": "node scripts/check-model-benchmark.mjs",
+    "validation:swim": "node --experimental-strip-types scripts/check-swim-acceptance.mjs",
     "verify:model": "node scripts/verify-model.mjs",
     "verify": "npm run assets:prepare && npm run verify:model && npm run typecheck && npm run lint && npm run test:unit && npm run build"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "1.0.0",
     "lucide-react": "^0.482.0",
+    "mediabunny": "1.51.0",
     "next": "16.2.12",
     "react": "19.2.8",
     "react-dom": "19.2.8"

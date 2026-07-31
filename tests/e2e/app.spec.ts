@@ -1,11 +1,30 @@
 import { expect, test } from "@playwright/test";
 
-test("ホーム画面からローカル姿勢分析を開始できる", async ({ page }) => {
+test("ホーム画面からSwim分析を開始できる", async ({ page }) => {
   await page.goto("/");
+  await expect(page.getByTestId("swim-analysis-workspace")).toHaveAttribute(
+    "data-hydrated",
+    "true",
+  );
 
   await expect(page).toHaveTitle(/MotionAnalysys/);
-  await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: /1本の泳ぎを/ }),
+  ).toBeVisible();
   await expect(page.locator('input[type="file"][accept*="video"]')).toHaveCount(1);
+
+  await expect(page.getByRole("button", { name: /Swim/ })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  for (const stroke of ["自由形", "背泳ぎ", "平泳ぎ", "バタフライ"]) {
+    await expect(page.getByRole("button", { name: stroke, exact: true })).toBeVisible();
+  }
+  for (const mode of ["Turn", "Start"]) {
+    const modeButton = page.getByRole("button", { name: new RegExp(mode) });
+    await expect(modeButton).toBeDisabled();
+    await expect(modeButton).toContainText("検証中");
+  }
 });
 
 for (const legalPage of [
@@ -46,9 +65,12 @@ test("旧動画アップロードAPIは公開されていない", async ({ reque
 test("本番の通信先を同一オリジンへ制限する", async ({ request }) => {
   const response = await request.get("/");
   const policy = response.headers()["content-security-policy"];
+  const permissionsPolicy = response.headers()["permissions-policy"];
 
   expect(policy).toContain("connect-src 'self'");
   expect(policy).not.toMatch(/googleapis|google-analytics|doubleclick/);
+  expect(permissionsPolicy).toContain("camera=()");
+  expect(permissionsPolicy).toContain("microphone=()");
 });
 
 for (const licenseFile of [
@@ -56,6 +78,7 @@ for (const licenseFile of [
   "/licenses/next/MIT.txt",
   "/licenses/react/MIT.txt",
   "/licenses/lucide/ISC.txt",
+  "/licenses/mediabunny/MPL-2.0.txt",
 ]) {
   test(`${licenseFile} を公開している`, async ({ request }) => {
     const response = await request.get(licenseFile);
@@ -65,58 +88,33 @@ for (const licenseFile of [
   });
 }
 
-test("カメラ権限を拒否した場合に復帰可能な案内を表示する", async ({
-  page,
-}) => {
-  await page.addInitScript(() => {
-    Object.defineProperty(navigator, "mediaDevices", {
-      configurable: true,
-      value: {
-        getUserMedia: async () => {
-          throw new DOMException(
-            "Camera permission denied by end-to-end test",
-            "NotAllowedError",
-          );
-        },
-      },
-    });
+test("非対応ファイルを動画として受け付けない", async ({ page }) => {
+  const clientErrors: string[] = [];
+  page.on("pageerror", (error) => clientErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") clientErrors.push(message.text());
   });
   await page.goto("/");
+  await expect(page.getByTestId("swim-analysis-workspace")).toHaveAttribute(
+    "data-hydrated",
+    "true",
+  );
+  expect(clientErrors).toEqual([]);
+  const backstroke = page.getByRole("button", { name: "背泳ぎ", exact: true });
+  await backstroke.click();
+  await expect(backstroke).toHaveAttribute("aria-pressed", "true");
 
-  await page
-    .getByRole("button", {
-      name: /(カメラ.*(?:開始|使う|撮影)|撮影.*カメラ)/,
-    })
-    .first()
-    .click();
-
-  const permissionMessage = page
-    .getByRole("alert")
-    .or(
-      page.getByText(
-        /カメラ.*(?:許可|拒否|アクセス|利用でき)|(?:許可|拒否|アクセス).*カメラ/,
-      ),
-    )
-    .first();
-  await expect(permissionMessage).toBeVisible();
-});
-
-test("非対応ファイルを動画として受け付けない", async ({ page }) => {
-  await page.goto("/");
-
-  await page.locator('input[type="file"]').setInputFiles({
+  const fileChooserPromise = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "動画を選ぶ" }).click();
+  const fileChooser = await fileChooserPromise;
+  await fileChooser.setFiles({
     name: "not-a-video.txt",
     mimeType: "text/plain",
     buffer: Buffer.from("This is not a video."),
   });
 
-  const unsupportedMessage = page
-    .getByRole("alert")
-    .or(
-      page.getByText(
-        /(?:対応していない|対応外|使用できない).*(?:ファイル|形式)|(?:ファイル|形式).*(?:対応していない|対応外|使用できない)/,
-      ),
-    )
-    .first();
+  const unsupportedMessage = page.getByRole("alert").filter({
+    hasText: "MP4、MOV、WebMに対応します",
+  });
   await expect(unsupportedMessage).toBeVisible();
 });

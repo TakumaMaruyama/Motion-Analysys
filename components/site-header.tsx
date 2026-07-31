@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Waves } from "lucide-react";
 
 export function SiteHeader() {
   return (
@@ -13,30 +14,14 @@ export function SiteHeader() {
             className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-700 text-white shadow-sm shadow-indigo-500/20 transition-transform group-hover:-rotate-3"
             aria-hidden="true"
           >
-            <svg
-              viewBox="0 0 24 24"
-              className="h-5 w-5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="5" r="2" />
-              <path d="m8.5 10 3.5-2 3.5 2" />
-              <path d="M12 8v6" />
-              <path d="m12 14-3.5 5" />
-              <path d="m12 14 3.5 5" />
-              <path d="m8.5 10-3 3" />
-              <path d="m15.5 10 3 3" />
-            </svg>
+            <Waves className="h-5 w-5" />
           </span>
           <span className="flex flex-col">
             <span className="text-base font-bold leading-none tracking-tight text-slate-950 dark:text-white sm:text-lg">
               MotionAnalysys
             </span>
             <span className="mt-1 hidden text-[10px] font-medium leading-none tracking-[0.14em] text-slate-500 dark:text-slate-400 sm:block">
-              LOCAL POSE REVIEW
+              LOCAL SWIM METRICS · BETA
             </span>
           </span>
         </Link>
@@ -50,7 +35,7 @@ export function SiteHeader() {
             href="/#analysis"
             className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 dark:bg-white dark:text-slate-950 dark:hover:bg-indigo-100 dark:focus-visible:ring-offset-slate-950"
           >
-            分析を始める
+            Swim計測を始める
           </Link>
         </nav>
       </div>

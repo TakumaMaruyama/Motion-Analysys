@@ -7,9 +7,9 @@ import { SiteHeader } from "@/components/site-header";
 
 import "../styles/globals.css";
 
-const DEFAULT_TITLE = "MotionAnalysys | 端末内スポーツフォーム分析";
+const DEFAULT_TITLE = "MotionAnalysys Beta | 端末内競泳計測";
 const DESCRIPTION =
-  "カメラや動画から33点の姿勢を端末内で推定し、関節角度と軌跡を確認できるローカル分析ツールです。";
+  "固定カメラで撮影した競泳動画ファイルを端末内で処理する、無料・検証中のローカル計測ベータ版です。";
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
@@ -38,6 +38,16 @@ export async function generateMetadata(): Promise<Metadata> {
     },
     description: DESCRIPTION,
     applicationName: "MotionAnalysys",
+    robots: {
+      index: false,
+      follow: false,
+      nocache: true,
+      googleBot: {
+        index: false,
+        follow: false,
+        noimageindex: true,
+      },
+    },
     openGraph: {
       type: "website",
       locale: "ja_JP",
@@ -49,7 +59,7 @@ export async function generateMetadata(): Promise<Metadata> {
           url: socialImage,
           width: 1536,
           height: 1024,
-          alt: "MotionAnalysys — フォームを、数字と軌跡で見返す。",
+          alt: "MotionAnalysys Beta — 競泳動画を端末内で参考計測する無料ベータ版。",
         },
       ],
     },

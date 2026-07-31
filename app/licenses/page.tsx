@@ -4,7 +4,7 @@ import { LegalPage, LegalSection } from "@/components/legal-page";
 export const metadata: Metadata = {
   title: "ライセンス | MotionAnalysys",
   description:
-    "MotionAnalysysが利用するMediaPipeランタイムとPose Landmarkerモデルのライセンス情報です。",
+    "MotionAnalysysが競泳動画の端末内計測に利用するMediaPipe、Mediabunny、Pose Landmarkerモデルのライセンス情報です。",
 };
 
 const apacheLicense = `Apache License
@@ -213,8 +213,8 @@ export default function LicensesPage() {
   return (
     <LegalPage
       title="ライセンス"
-      description="本アプリに同梱している姿勢推定ランタイム、モデル、主要な実行時ライブラリの出所、バージョン、ライセンスを掲載します。"
-      lastUpdated="2026年7月30日"
+      description="競泳動画の端末内計測に使用する動画読込みライブラリ、姿勢推定ランタイム、モデル、主要な実行時ライブラリの出所、バージョン、ライセンスを掲載します。"
+      lastUpdated="2026年8月1日"
     >
       <LegalSection id="mediapipe-runtime" title="MediaPipe Tasks Vision">
         <dl className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/70 sm:grid-cols-[10rem_1fr]">
@@ -241,6 +241,55 @@ export default function LicensesPage() {
             </a>
           </dd>
         </dl>
+      </LegalSection>
+
+      <LegalSection id="mediabunny" title="Mediabunny">
+        <dl className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/70 sm:grid-cols-[10rem_1fr]">
+          <dt className="font-semibold text-slate-900 dark:text-white">名称</dt>
+          <dd>mediabunny</dd>
+          <dt className="font-semibold text-slate-900 dark:text-white">バージョン</dt>
+          <dd>1.51.0</dd>
+          <dt className="font-semibold text-slate-900 dark:text-white">用途</dt>
+          <dd>端末内の競泳動画からタイムスタンプ付きフレームを読み出す処理</dd>
+          <dt className="font-semibold text-slate-900 dark:text-white">ライセンス</dt>
+          <dd>
+            <a href="/licenses/mediabunny/MPL-2.0.txt">
+              Mozilla Public License 2.0
+            </a>
+          </dd>
+          <dt className="font-semibold text-slate-900 dark:text-white">パッケージ作者</dt>
+          <dd>Vanilagy</dd>
+          <dt className="font-semibold text-slate-900 dark:text-white">ソース</dt>
+          <dd>
+            <a
+              href="https://github.com/Vanilagy/mediabunny"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Vanilagy/mediabunny
+            </a>
+          </dd>
+          <dt className="font-semibold text-slate-900 dark:text-white">配布物</dt>
+          <dd>
+            <a
+              href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.51.0.tgz"
+              target="_blank"
+              rel="noreferrer"
+            >
+              mediabunny-1.51.0.tgz（対応するソースを含む）
+            </a>
+          </dd>
+        </dl>
+        <p>
+          本アプリはMediabunnyをブラウザ内で使用し、利用者が選択した固定カメラの競泳動画から、計測対象となる時刻のフレームを読み出します。動画ファイルや復号したフレームをMediabunnyの運営者または外部の解析サービスへ送信する処理はありません。
+        </p>
+        <p>
+          同梱パッケージの英語ライセンス原文は
+          <a href="/licenses/mediabunny/MPL-2.0.txt">
+            Mozilla Public License 2.0全文
+          </a>
+          で確認できます。日本語での説明と相違がある場合は、英語原文が優先されます。
+        </p>
       </LegalSection>
 
       <LegalSection id="pose-model" title="Pose Landmarker Full">

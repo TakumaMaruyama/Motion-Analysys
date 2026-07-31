@@ -1,4 +1,4 @@
-import { AnalysisWorkspace } from "@/components/analysis-workspace";
+import { SwimAnalysisWorkspace } from "@/components/swim-analysis-workspace";
 
 export default function HomePage() {
   return (
@@ -9,25 +9,25 @@ export default function HomePage() {
           <div className="max-w-3xl">
             <p className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold tracking-wide text-indigo-700 dark:border-indigo-900 dark:bg-indigo-950/70 dark:text-indigo-300">
               <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-              LOCAL POSE ANALYSIS
+              POOL-SIDE SWIM ANALYSIS
             </p>
             <h1 className="mt-5 text-balance text-4xl font-black tracking-tight text-slate-950 dark:text-white sm:text-5xl lg:text-6xl">
-              フォームを、
+              1本の泳ぎを、
               <span className="text-indigo-600 dark:text-indigo-400">
-                数字と軌跡
+                速度とストローク
               </span>
-              で見返す。
+              で返す。
             </h1>
             <p className="mt-5 max-w-2xl text-base leading-8 text-slate-600 dark:text-slate-300 sm:text-lg">
-              カメラまたは動画から33点の姿勢を推定し、関節角度・体幹の傾き・可動域を確認します。映像はアップロードせず、このブラウザだけで処理します。
+              固定カメラの動画から、区間タイム・平均速度・ストローク指標を算出します。自動検出したイベントはコーチが映像と照合し、その場で補正できます。
             </p>
           </div>
           <div className="grid grid-cols-2 gap-3">
             {[
-              ["33", "姿勢ポイント"],
-              ["15 Hz", "動画の固定解析"],
-              ["0", "クラウド保存"],
-              ["3形式", "JSON / CSV / PNG"],
+              ["30秒", "最大解析区間"],
+              ["2本", "距離ゲート"],
+              ["4泳法", "Swim分析"],
+              ["0", "動画アップロード"],
             ].map(([value, label]) => (
               <div
                 key={label}
@@ -45,24 +45,24 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 md:py-14 lg:px-8">
-        <AnalysisWorkspace />
+      <section id="analysis" className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 md:py-14 lg:px-8">
+        <SwimAnalysisWorkspace />
       </section>
 
       <section className="border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
         <div className="mx-auto grid w-full max-w-7xl gap-6 px-4 py-12 sm:px-6 md:grid-cols-3 lg:px-8">
           {[
             [
-              "撮影面をそろえる",
-              "主要な数値は映像平面の2D角度です。毎回なるべく同じ向き・距離で撮ると比較しやすくなります。",
+              "泳者を横から固定撮影",
+              "カメラを動かさず、泳者とレーンロープの目印が同じ画面に入る位置で撮影します。Swim分析は30fps以上を使用してください。",
             ],
             [
-              "全身を画面に入れる",
-              "頭から足先まで見える明るい映像を使ってください。必要な点の信頼度が0.5未満なら値を表示しません。",
+              "既知の距離で校正",
+              "5mラインなど実距離が分かる2点へゲートA・Bを合わせます。同じカメラ位置なら校正をこの端末で再利用できます。",
             ],
             [
-              "傾向の確認に使う",
-              "単眼カメラによる推定値です。医療診断や、cm・m単位の校正済み3D計測には使用できません。",
+              "最後はコーチが確定",
+              "ゲート通過と左右または両手のストロークマーカーを映像で確認し、追加・移動・削除してから記録を書き出します。",
             ],
           ].map(([title, body], index) => (
             <article

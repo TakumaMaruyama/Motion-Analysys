@@ -1,7 +1,8 @@
 # Third-party notices
 
-MotionAnalysys distributes the following direct runtime software and model
-artifact. The notices below do not replace the corresponding license terms.
+MotionAnalysys distributes the following direct runtime software packages and
+model artifact. The notices below do not replace the corresponding license
+terms.
 
 ## MediaPipe Tasks Vision
 
@@ -16,6 +17,26 @@ artifact. The notices below do not replace the corresponding license terms.
 
 The complete Apache License 2.0 text is distributed at
 [`public/licenses/mediapipe/APACHE-2.0.txt`](public/licenses/mediapipe/APACHE-2.0.txt).
+
+## Mediabunny
+
+- Package: `mediabunny`
+- Version: `1.51.0`
+- Project: [Vanilagy/mediabunny](https://github.com/Vanilagy/mediabunny)
+- Homepage: <https://mediabunny.dev/>
+- Package distribution and corresponding source archive:
+  <https://registry.npmjs.org/mediabunny/-/mediabunny-1.51.0.tgz>
+- License: Mozilla Public License 2.0 (`MPL-2.0`)
+- Package author: Vanilagy
+
+MotionAnalysys uses Mediabunny in the browser to read timestamps and decode
+frames from a fixed-camera competitive-swimming video selected by the user.
+Those video bytes and decoded frames remain in the user's browser; this
+integration does not upload them to Mediabunny or another analysis service.
+
+The complete Mozilla Public License 2.0 text from the installed package is
+distributed unchanged at
+[`public/licenses/mediabunny/MPL-2.0.txt`](public/licenses/mediabunny/MPL-2.0.txt).
 
 ## MediaPipe Pose Landmarker Full
 

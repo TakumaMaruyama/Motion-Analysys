@@ -132,6 +132,8 @@ export interface ImageDimensions {
 export interface PoseFrame {
   /** 解析対象動画またはカメラストリーム先頭からの時刻（ミリ秒）。 */
   readonly timestampMs: number;
+  /** 元動画でのフレーム番号。旧V1データやライブ入力では未設定。 */
+  readonly sourceFrameIndex?: number;
   readonly imageSize: ImageDimensions;
   readonly landmarks: PoseLandmarks;
   readonly worldLandmarks: PoseWorldLandmarks | null;
@@ -169,6 +171,11 @@ export type MetricUnit =
   | "normalized"
   | "ratio"
   | "ms"
+  | "s"
+  | "m"
+  | "m/s"
+  | "cycles/min"
+  | "m/cycle"
   | "px"
   | "count";
 
