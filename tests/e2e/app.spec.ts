@@ -41,6 +41,19 @@ for (const legalPage of [
   });
 }
 
+test("検証ラベル作成画面を直接開ける", async ({ page }) => {
+  await page.goto("/validation");
+
+  await expect(
+    page.getByRole("heading", {
+      level: 1,
+      name: "自動結果を見ずに正解フレームを作る",
+    }),
+  ).toBeVisible();
+  await expect(page.getByText("自動検出は表示しません")).toBeVisible();
+  await expect(page.locator('input[type="file"][accept*="video"]')).toHaveCount(1);
+});
+
 for (const removedPath of [
   "/motion-analysis",
   "/dashboard",

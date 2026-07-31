@@ -46,7 +46,7 @@ export default function PrivacyPage() {
           </li>
           <li>
             <strong>書き出しデータ：</strong>
-            JSON、CSV、PNGは利用者の操作によって端末へ保存されます。保存後の管理は利用者ご自身で行ってください。
+            分析JSON、CSV、PNG、および検証ラベルJSONは利用者の操作によって端末へ保存されます。検証ラベルJSONには元動画のファイル名やパスを含めません。保存後の管理は利用者ご自身で行ってください。
           </li>
         </ul>
       </LegalSection>
@@ -104,7 +104,7 @@ export default function PrivacyPage() {
           <li>共有端末では、書き出したファイルを置き忘れないようご注意ください。</li>
           <li>現在の分析データを消去するには、分析を終了してページを閉じてください。</li>
           <li>校正プロファイルを消去するには、本アプリの削除操作またはブラウザのサイトデータ削除機能を使用してください。</li>
-          <li>ブラウザやOSの機能から、ダウンロード済みのJSON、CSV、PNGを管理できます。</li>
+          <li>ブラウザやOSの機能から、ダウンロード済みのJSON、CSV、PNG、検証ラベルJSONを管理できます。</li>
         </ul>
       </LegalSection>
 

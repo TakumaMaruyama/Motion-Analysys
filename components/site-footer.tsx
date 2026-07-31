@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 const legalLinks = [
+  { href: "/validation", label: "検証ラベル" },
   { href: "/privacy", label: "プライバシー" },
   { href: "/terms", label: "利用規約" },
   { href: "/licenses", label: "ライセンス" },

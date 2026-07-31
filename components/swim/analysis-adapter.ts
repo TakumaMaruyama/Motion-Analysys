@@ -448,15 +448,21 @@ export async function runSwimAnalysisForUi(
     signal,
   );
 
-  if (cameraMotionMonitor.cameraMotionDetected) {
-    throw new Error(
-      "カメラ移動の可能性を検出しました。三脚で固定し、ズームや追従撮影をせずに撮り直してください。",
-    );
-  }
-
   if (frames.length === 0) {
     throw new Error(
       "泳者を検出できませんでした。全身が見える明るい固定撮影動画で、もう一度お試しください。",
+    );
+  }
+
+  const cameraStability = cameraMotionMonitor.stabilityState;
+  if (cameraStability === "moving") {
+    throw new Error(
+      "カメラの移動・ズーム・回転を検出しました。三脚で固定し、追従撮影をせずに撮り直してください。",
+    );
+  }
+  if (cameraStability === "unassessable") {
+    throw new Error(
+      "カメラの固定状態を判定できませんでした。背景の目印を画面に入れ、2秒以上の明るい固定撮影動画で撮り直してください。",
     );
   }
 

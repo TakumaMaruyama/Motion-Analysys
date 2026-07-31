@@ -63,7 +63,7 @@ async function blankVideo30Fps(
       context.fillRect(frame % canvas.width, 0, 2, 2);
       frame += 1;
     }, 1000 / 60);
-    await new Promise((resolve) => window.setTimeout(resolve, 1_250));
+    await new Promise((resolve) => window.setTimeout(resolve, 2_250));
     window.clearInterval(timer);
     recorder.stop();
     await stopped;
@@ -102,6 +102,9 @@ async function openCalibration(page: Page) {
   await expect(page.getByText("Swim精密解析に使用できます")).toBeVisible({
     timeout: 30_000,
   });
+  await expect(
+    page.getByText("モデル・Worker・実動画1フレームを確認済み"),
+  ).toBeVisible({ timeout: 45_000 });
   await page.getByRole("button", { name: "距離校正へ進む" }).click();
   await expect(
     page.getByRole("heading", { name: "既知の距離を2本の線で挟む" }),
@@ -123,9 +126,8 @@ test("30fps未満の動画はプレビューだけ許可し精密解析を無効
   await expect(
     page.getByText("Swim解析には30fps以上の固定撮影動画が必要です。"),
   ).toBeVisible();
-  await page.getByRole("button", { name: "距離校正へ進む" }).click();
   await expect(
-    page.getByRole("button", { name: "校正を確定して解析" }),
+    page.getByRole("button", { name: "距離校正へ進む" }),
   ).toBeDisabled();
 });
 
@@ -150,6 +152,9 @@ test("縦動画でも表示領域と距離ゲートを元映像の比率へ合�
     "aspect-ratio",
     "180 / 320",
   );
+  await expect(
+    page.getByText("モデル・Worker・実動画1フレームを確認済み"),
+  ).toBeVisible({ timeout: 45_000 });
   await page.getByRole("button", { name: "距離校正へ進む" }).click();
   await expect(page.getByTestId("calibration-video-stage")).toHaveCSS(
     "aspect-ratio",

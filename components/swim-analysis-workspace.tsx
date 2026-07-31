@@ -5,6 +5,8 @@ import {
   ArrowLeft,
   Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   Download,
   FileJson,
@@ -15,12 +17,15 @@ import {
   ImageDown,
   LoaderCircle,
   Plus,
+  Redo2,
   RefreshCcw,
   Scissors,
   ShieldCheck,
   Trash2,
+  Undo2,
   Upload,
   X,
+  ZoomIn,
 } from "lucide-react";
 import {
   type ChangeEvent,
@@ -53,10 +58,19 @@ import {
   isSupportedCompetitionVideoFile,
   type CompetitionVideoMetadata,
 } from "@/lib/video/competition-frame-source";
+import {
+  diagnosePrecisionAnalysisCapabilities,
+  type PrecisionAnalysisCapabilityDiagnostic,
+} from "@/lib/video/capability-diagnostics";
+import {
+  adjacentFrameTimestamp,
+  snapToFrameTimestamp,
+} from "@/lib/video/frame-timeline-navigation";
+import { runPrecisionAnalysisPreflight } from "@/lib/video/precision-preflight";
 import type { AnalysisMode, StrokeStyle } from "@/types/competition";
 
 const MAX_TRIM_SECONDS = 30;
-const MIN_TRIM_SECONDS = 0.5;
+const MIN_TRIM_SECONDS = 2;
 const MIN_GATE_GAP = 0.03;
 const CALIBRATION_STORAGE_KEY = "motionanalysys.swim-calibration.v2";
 const LEGACY_CALIBRATION_STORAGE_KEY = "motionanalysys.swim-calibration.v1";
@@ -159,6 +173,28 @@ interface LegacySavedCalibration {
   readonly savedAt?: string;
 }
 
+interface ResultEditHistory {
+  readonly past: readonly SwimAnalysisViewResult[];
+  readonly present: SwimAnalysisViewResult | null;
+  readonly future: readonly SwimAnalysisViewResult[];
+  readonly coalesceKey: string | null;
+}
+
+type PrecisionPreflightState =
+  | { readonly status: "idle"; readonly message: null }
+  | { readonly status: "running"; readonly message: string }
+  | { readonly status: "supported"; readonly message: string }
+  | { readonly status: "error"; readonly message: string };
+
+const EMPTY_RESULT_HISTORY: ResultEditHistory = {
+  past: [],
+  present: null,
+  future: [],
+  coalesceKey: null,
+};
+
+const MAX_RESULT_HISTORY = 50;
+
 function formatTime(timestampMs: number): string {
   const safeMs = Number.isFinite(timestampMs) ? Math.max(0, timestampMs) : 0;
   const totalSeconds = safeMs / 1000;
@@ -185,6 +221,18 @@ function formatMetric(value: number | null, unit: string): string {
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+function isTextEntryTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  return (
+    target.isContentEditable ||
+    target.tagName === "INPUT" ||
+    target.tagName === "TEXTAREA" ||
+    target.tagName === "SELECT"
+  );
 }
 
 function sourceAspectRatio(source: VideoSource): string {
@@ -296,12 +344,19 @@ export function SwimAnalysisWorkspace() {
     useState<SavedCalibration | null>(null);
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState("準備しています");
-  const [result, setResult] = useState<SwimAnalysisViewResult | null>(null);
+  const [resultHistory, setResultHistory] = useState<ResultEditHistory>(
+    EMPTY_RESULT_HISTORY,
+  );
+  const result = resultHistory.present;
   const [videoMetadata, setVideoMetadata] =
     useState<CompetitionVideoMetadata | null>(null);
   const [videoInspectionPending, setVideoInspectionPending] = useState(false);
   const [videoInspectionError, setVideoInspectionError] =
     useState<string | null>(null);
+  const [capabilityDiagnostic, setCapabilityDiagnostic] =
+    useState<PrecisionAnalysisCapabilityDiagnostic | null>(null);
+  const [precisionPreflight, setPrecisionPreflight] =
+    useState<PrecisionPreflightState>({ status: "idle", message: null });
   const [newEventType, setNewEventType] =
     useState<SwimEventType>("leftStroke");
   const [newEventGate, setNewEventGate] =
@@ -315,12 +370,99 @@ export function SwimAnalysisWorkspace() {
   const sourceRef = useRef<VideoSource | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const inspectionAbortRef = useRef<AbortController | null>(null);
+  const preflightAbortRef = useRef<AbortController | null>(null);
+  const preflightRunRef = useRef<Promise<void>>(Promise.resolve());
   const manualEventCounterRef = useRef(0);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const sourceFile = source?.file ?? null;
 
+  const replaceResult = useCallback(
+    (nextResult: SwimAnalysisViewResult | null) => {
+      setResultHistory({
+        past: [],
+        present: nextResult,
+        future: [],
+        coalesceKey: null,
+      });
+    },
+    [],
+  );
+
+  const commitTimelineEdit = useCallback(
+    (
+      edit: Parameters<typeof applySwimTimelineEditForUi>[1],
+      coalesceKey: string | null = null,
+    ) => {
+      setResultHistory((current) => {
+        if (!current.present) {
+          return current;
+        }
+        const nextResult = applySwimTimelineEditForUi(current.present, edit);
+        if (coalesceKey !== null && current.coalesceKey === coalesceKey) {
+          return {
+            ...current,
+            present: nextResult,
+            future: [],
+          };
+        }
+        return {
+          past: [
+            ...current.past.slice(-(MAX_RESULT_HISTORY - 1)),
+            current.present,
+          ],
+          present: nextResult,
+          future: [],
+          coalesceKey,
+        };
+      });
+    },
+    [],
+  );
+
+  const endTimelineEditCoalescing = useCallback(() => {
+    setResultHistory((current) =>
+      current.coalesceKey === null
+        ? current
+        : { ...current, coalesceKey: null },
+    );
+  }, []);
+
+  const undoTimelineEdit = useCallback(() => {
+    setResultHistory((current) => {
+      const previous = current.past.at(-1);
+      if (!previous || !current.present) {
+        return current;
+      }
+      return {
+        past: current.past.slice(0, -1),
+        present: previous,
+        future: [current.present, ...current.future].slice(0, MAX_RESULT_HISTORY),
+        coalesceKey: null,
+      };
+    });
+  }, []);
+
+  const redoTimelineEdit = useCallback(() => {
+    setResultHistory((current) => {
+      const next = current.future[0];
+      if (!next || !current.present) {
+        return current;
+      }
+      return {
+        past: [...current.past.slice(-(MAX_RESULT_HISTORY - 1)), current.present],
+        present: next,
+        future: current.future.slice(1),
+        coalesceKey: null,
+      };
+    });
+  }, []);
+
   useEffect(() => {
     workspaceRef.current?.setAttribute("data-hydrated", "true");
+    const timer = window.setTimeout(() => {
+      setCapabilityDiagnostic(diagnosePrecisionAnalysisCapabilities());
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -377,6 +519,70 @@ export function SwimAnalysisWorkspace() {
   }, [sourceFile]);
 
   useEffect(() => {
+    if (
+      !sourceFile ||
+      !videoMetadata ||
+      capabilityDiagnostic?.supported !== true
+    ) {
+      return;
+    }
+    const assessment = getModeFpsAssessment(videoMetadata, "swim");
+    if (!assessment.allowed) {
+      return;
+    }
+
+    const controller = new AbortController();
+    preflightAbortRef.current?.abort();
+    preflightAbortRef.current = controller;
+    const timer = window.setTimeout(() => {
+      setPrecisionPreflight({
+        status: "running",
+        message: "モデル・Worker・実動画1フレームを確認しています",
+      });
+      const executePreflight = async () => {
+        if (controller.signal.aborted) return;
+        try {
+          await runPrecisionAnalysisPreflight(sourceFile, {
+            startMs: 0,
+            endMs: Math.min(videoMetadata.durationMs, 1_000),
+            signal: controller.signal,
+          });
+          if (!controller.signal.aborted) {
+            setPrecisionPreflight({
+              status: "supported",
+              message: "モデル・Worker・実動画1フレームを確認済み",
+            });
+          }
+        } catch (preflightError: unknown) {
+          if (!controller.signal.aborted) {
+            setPrecisionPreflight({
+              status: "error",
+              message:
+                preflightError instanceof Error
+                  ? preflightError.message
+                  : "精密解析の事前確認に失敗しました。",
+            });
+          }
+        } finally {
+          if (preflightAbortRef.current === controller) {
+            preflightAbortRef.current = null;
+          }
+        }
+      };
+      const queuedPreflight = preflightRunRef.current.then(
+        executePreflight,
+        executePreflight,
+      );
+      preflightRunRef.current = queuedPreflight;
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [capabilityDiagnostic?.supported, sourceFile, videoMetadata]);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => {
       try {
         const raw = window.localStorage.getItem(CALIBRATION_STORAGE_KEY);
@@ -416,6 +622,7 @@ export function SwimAnalysisWorkspace() {
     return () => {
       abortRef.current?.abort();
       inspectionAbortRef.current?.abort();
+      preflightAbortRef.current?.abort();
       const activeSource = sourceRef.current;
       if (activeSource) {
         URL.revokeObjectURL(activeSource.url);
@@ -437,7 +644,10 @@ export function SwimAnalysisWorkspace() {
     () => (videoMetadata ? getModeFpsAssessment(videoMetadata, "swim") : null),
     [videoMetadata],
   );
-  const analysisAllowed = videoAssessment?.allowed === true;
+  const analysisAllowed =
+    capabilityDiagnostic?.supported === true &&
+    videoAssessment?.allowed === true &&
+    precisionPreflight.status === "supported";
 
   const orderedEvents = useMemo(
     () =>
@@ -454,6 +664,7 @@ export function SwimAnalysisWorkspace() {
       return;
     }
     inspectionAbortRef.current?.abort();
+    preflightAbortRef.current?.abort();
     const previous = sourceRef.current;
     if (previous) {
       URL.revokeObjectURL(previous.url);
@@ -467,14 +678,15 @@ export function SwimAnalysisWorkspace() {
     };
     sourceRef.current = nextSource;
     setSource(nextSource);
-    setResult(null);
+    replaceResult(null);
     setVideoMetadata(null);
     setVideoInspectionError(null);
     setVideoInspectionPending(true);
+    setPrecisionPreflight({ status: "idle", message: null });
     setTrimStartMs(0);
     setTrimEndMs(0);
     setCurrentTimeMs(0);
-  }, []);
+  }, [replaceResult]);
 
   const onFileChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -682,7 +894,7 @@ export function SwimAnalysisWorkspace() {
       ) {
         return;
       }
-      setResult(nextResult);
+      replaceResult(nextResult);
       setCurrentTimeMs(nextResult.trim.startMs);
       setStep("results");
       window.setTimeout(() => {
@@ -714,6 +926,7 @@ export function SwimAnalysisWorkspace() {
     firstGateX,
     mode,
     persistCalibration,
+    replaceResult,
     secondGateX,
     sessionLabel,
     source,
@@ -741,12 +954,15 @@ export function SwimAnalysisWorkspace() {
     }
     sourceRef.current = null;
     setSource(null);
-    setResult(null);
+    replaceResult(null);
     inspectionAbortRef.current?.abort();
     inspectionAbortRef.current = null;
+    preflightAbortRef.current?.abort();
+    preflightAbortRef.current = null;
     setVideoMetadata(null);
     setVideoInspectionError(null);
     setVideoInspectionPending(false);
+    setPrecisionPreflight({ status: "idle", message: null });
     setTrimStartMs(0);
     setTrimEndMs(0);
     setCurrentTimeMs(0);
@@ -756,7 +972,7 @@ export function SwimAnalysisWorkspace() {
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
-  }, []);
+  }, [replaceResult]);
 
   const seekVideo = useCallback((timestampMs: number) => {
     const video = videoRef.current;
@@ -767,41 +983,113 @@ export function SwimAnalysisWorkspace() {
     setCurrentTimeMs(timestampMs);
   }, []);
 
+  const resultFrameStepMs = result?.competition.videoInput.effectiveFps
+    ? 1000 / result.competition.videoInput.effectiveFps
+    : 1000 / 30;
+
+  const snapResultTimestamp = useCallback(
+    (timestampMs: number) => {
+      if (!result) return timestampMs;
+      return snapToFrameTimestamp(
+        result.competition.videoInput.frameTimestampsMs,
+        timestampMs,
+        result.trim.startMs,
+        result.trim.endMs,
+      );
+    },
+    [result],
+  );
+
+  const stepCurrentFrame = useCallback(
+    (direction: -1 | 1) => {
+      if (!result) {
+        return;
+      }
+      videoRef.current?.pause();
+      seekVideo(
+        adjacentFrameTimestamp(
+          result.competition.videoInput.frameTimestampsMs,
+          currentTimeMs,
+          direction,
+          result.trim.startMs,
+          result.trim.endMs,
+          resultFrameStepMs,
+        ),
+      );
+    },
+    [currentTimeMs, result, resultFrameStepMs, seekVideo],
+  );
+
+  useEffect(() => {
+    if (step !== "results" || !result) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isTextEntryTarget(event.target)) {
+        return;
+      }
+      const commandKey = event.metaKey || event.ctrlKey;
+      if (commandKey && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          redoTimelineEdit();
+        } else {
+          undoTimelineEdit();
+        }
+        return;
+      }
+      if (commandKey && event.key.toLowerCase() === "y") {
+        event.preventDefault();
+        redoTimelineEdit();
+        return;
+      }
+      if (event.altKey || event.metaKey || event.ctrlKey) {
+        return;
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        stepCurrentFrame(-1);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        stepCurrentFrame(1);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [redoTimelineEdit, result, step, stepCurrentFrame, undoTimelineEdit]);
+
   const addManualEvent = useCallback(() => {
     if (!result) {
       return;
     }
     manualEventCounterRef.current += 1;
-    const timestampMs = clamp(
-      currentTimeMs,
-      result.trim.startMs,
-      result.trim.endMs,
-    );
-    setResult(
-      applySwimTimelineEditForUi(result, {
-        action: "add",
-        id: `manual-${Date.now()}-${manualEventCounterRef.current}`,
-        type: newEventType,
-        timestampMs,
-        gateId: newEventType === "gateCrossing" ? newEventGate : null,
-      }),
-    );
-  }, [currentTimeMs, newEventGate, newEventType, result]);
+    const timestampMs = snapResultTimestamp(currentTimeMs);
+    commitTimelineEdit({
+      action: "add",
+      id: `manual-${Date.now()}-${manualEventCounterRef.current}`,
+      type: newEventType,
+      timestampMs,
+      gateId: newEventType === "gateCrossing" ? newEventGate : null,
+    });
+  }, [commitTimelineEdit, currentTimeMs, newEventGate, newEventType, result, snapResultTimestamp]);
 
   const moveEvent = useCallback(
     (eventId: string, timestampMs: number) => {
       if (!result) {
         return;
       }
-      setResult(
-        applySwimTimelineEditForUi(result, {
+      const snappedTimestampMs = snapResultTimestamp(timestampMs);
+      commitTimelineEdit(
+        {
           action: "move",
           eventId,
-          timestampMs,
-        }),
+          timestampMs: snappedTimestampMs,
+        },
+        `move:${eventId}`,
       );
+      seekVideo(snappedTimestampMs);
     },
-    [result],
+    [commitTimelineEdit, result, seekVideo, snapResultTimestamp],
   );
 
   const verifyEvent = useCallback(
@@ -809,14 +1097,12 @@ export function SwimAnalysisWorkspace() {
       if (!result) {
         return;
       }
-      setResult(
-        applySwimTimelineEditForUi(result, {
-          action: "verify",
-          eventId,
-        }),
-      );
+      commitTimelineEdit({
+        action: "verify",
+        eventId,
+      });
     },
-    [result],
+    [commitTimelineEdit, result],
   );
 
   const deleteEvent = useCallback(
@@ -824,14 +1110,12 @@ export function SwimAnalysisWorkspace() {
       if (!result) {
         return;
       }
-      setResult(
-        applySwimTimelineEditForUi(result, {
-          action: "remove",
-          eventId,
-        }),
-      );
+      commitTimelineEdit({
+        action: "remove",
+        eventId,
+      });
     },
-    [result],
+    [commitTimelineEdit, result],
   );
 
   const exportJson = useCallback(() => {
@@ -966,6 +1250,8 @@ export function SwimAnalysisWorkspace() {
           videoInspectionPending={videoInspectionPending}
           videoInspectionError={videoInspectionError}
           videoAssessment={videoAssessment}
+          capabilityDiagnostic={capabilityDiagnostic}
+          precisionPreflight={precisionPreflight}
           videoRef={videoRef}
           fileInputRef={fileInputRef}
           onModeChange={setMode}
@@ -999,7 +1285,14 @@ export function SwimAnalysisWorkspace() {
           distanceMeters={distanceMeters}
           calibrationIsValid={calibrationIsValid}
           analysisAllowed={analysisAllowed}
-          assessmentMessage={videoAssessment?.message ?? videoInspectionError}
+          assessmentMessage={
+            (precisionPreflight.status === "error"
+              ? precisionPreflight.message
+              : null) ??
+            capabilityDiagnostic?.reasons[0]?.message ??
+            videoAssessment?.message ??
+            videoInspectionError
+          }
           savedCalibration={savedCalibration}
           rememberCalibration={rememberCalibration}
           onVideoMetadata={onVideoMetadata}
@@ -1039,8 +1332,15 @@ export function SwimAnalysisWorkspace() {
           onNewEventGateChange={setNewEventGate}
           onAddEvent={addManualEvent}
           onMoveEvent={moveEvent}
+          onMoveEventEnd={endTimelineEditCoalescing}
           onVerifyEvent={verifyEvent}
           onDeleteEvent={deleteEvent}
+          frameStepMs={resultFrameStepMs}
+          canUndo={resultHistory.past.length > 0}
+          canRedo={resultHistory.future.length > 0}
+          onStepFrame={stepCurrentFrame}
+          onUndo={undoTimelineEdit}
+          onRedo={redoTimelineEdit}
           onExportJson={exportJson}
           onExportCsv={exportCsv}
           onExportPng={() => void exportPng()}
@@ -1112,6 +1412,8 @@ function SetupPanel({
   videoInspectionPending,
   videoInspectionError,
   videoAssessment,
+  capabilityDiagnostic,
+  precisionPreflight,
   videoRef,
   fileInputRef,
   onModeChange,
@@ -1134,6 +1436,8 @@ function SetupPanel({
   videoInspectionPending: boolean;
   videoInspectionError: string | null;
   videoAssessment: { readonly allowed: boolean; readonly message: string | null } | null;
+  capabilityDiagnostic: PrecisionAnalysisCapabilityDiagnostic | null;
+  precisionPreflight: PrecisionPreflightState;
   videoRef: RefObject<HTMLVideoElement | null>;
   fileInputRef: RefObject<HTMLInputElement | null>;
   onModeChange: (mode: AnalysisMode) => void;
@@ -1158,6 +1462,8 @@ function SetupPanel({
           現在は直進泳のSwim分析に対応しています。解析する動画はこの端末内だけで処理します。
         </p>
       </div>
+
+      <BrowserCapabilityPanel diagnostic={capabilityDiagnostic} />
 
       <fieldset className="mt-7">
         <legend className="text-sm font-black">分析モード</legend>
@@ -1288,6 +1594,7 @@ function SetupPanel({
               pending={videoInspectionPending}
               error={videoInspectionError}
               assessment={videoAssessment}
+              precisionPreflight={precisionPreflight}
             />
           </div>
           <div className="rounded-2xl border border-slate-200 p-5 dark:border-slate-800">
@@ -1296,7 +1603,7 @@ function SetupPanel({
               <h3 className="font-black">解析区間</h3>
             </div>
             <p className="mt-2 text-xs leading-5 text-slate-500">
-              30秒以内で、泳者が2本の基準線を通過する区間を選びます。
+              2〜30秒で、泳者が2本の基準線を通過する区間を選びます。
             </p>
             {source.durationMs > 0 ? (
               <div className="mt-5 space-y-5">
@@ -1343,7 +1650,11 @@ function SetupPanel({
             <Button
               type="button"
               size="lg"
-              disabled={!trimIsValid}
+              disabled={
+                !trimIsValid ||
+                capabilityDiagnostic?.supported !== true ||
+                precisionPreflight.status !== "supported"
+              }
               onClick={onNext}
               className="mt-6 h-12 w-full rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
             >
@@ -1356,16 +1667,60 @@ function SetupPanel({
   );
 }
 
+function BrowserCapabilityPanel({
+  diagnostic,
+}: {
+  diagnostic: PrecisionAnalysisCapabilityDiagnostic | null;
+}) {
+  if (!diagnostic) {
+    return (
+      <div className="mt-6 flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-600 dark:border-slate-800 dark:bg-slate-950/60 dark:text-slate-300">
+        <LoaderCircle className="h-4 w-4 animate-spin text-indigo-600" />
+        ブラウザの解析機能を確認しています
+      </div>
+    );
+  }
+
+  const messages = diagnostic.supported
+    ? diagnostic.warnings
+    : diagnostic.reasons;
+  return (
+    <div
+      data-testid="precision-capability-diagnostic"
+      role={diagnostic.supported ? "status" : "alert"}
+      className={`mt-6 rounded-2xl border px-4 py-3 text-xs leading-5 ${diagnostic.supported ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200" : "border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-200"}`}
+    >
+      <p className="font-black">
+        {diagnostic.supported
+          ? "解析環境を利用できます"
+          : "このブラウザでは精密解析を開始できません"}
+      </p>
+      <p className="mt-1">
+        WebCodecs・Worker・動画フレーム変換を解析前に確認しました。
+      </p>
+      {messages.length > 0 && (
+        <ul className="mt-2 list-disc space-y-1 pl-4">
+          {messages.map((message) => (
+            <li key={message.code}>{message.message}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function VideoInspectionPanel({
   metadata,
   pending,
   error,
   assessment,
+  precisionPreflight,
 }: {
   metadata: CompetitionVideoMetadata | null;
   pending: boolean;
   error: string | null;
   assessment: { readonly allowed: boolean; readonly message: string | null } | null;
+  precisionPreflight: PrecisionPreflightState;
 }) {
   if (pending) {
     return (
@@ -1432,6 +1787,18 @@ function VideoInspectionPanel({
       <p className={`mt-3 text-xs font-black ${assessment?.allowed ? "text-emerald-700 dark:text-emerald-300" : "text-amber-900 dark:text-amber-200"}`}>
         {assessment?.allowed ? "Swim精密解析に使用できます" : assessment?.message}
       </p>
+      {assessment?.allowed && precisionPreflight.status !== "idle" && (
+        <div
+          data-testid="precision-runtime-preflight"
+          role={precisionPreflight.status === "error" ? "alert" : "status"}
+          className={`mt-2 flex items-start gap-2 rounded-lg px-3 py-2 text-xs font-bold ${precisionPreflight.status === "error" ? "bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200" : precisionPreflight.status === "supported" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200" : "bg-white/70 text-slate-600 dark:bg-slate-900/60 dark:text-slate-300"}`}
+        >
+          {precisionPreflight.status === "running" && (
+            <LoaderCircle className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+          )}
+          <span>{precisionPreflight.message}</span>
+        </div>
+      )}
       {!assessment?.allowed && (
         <p className="mt-1 text-xs leading-5 text-amber-800 dark:text-amber-300">
           プレビューは確認できます。30fps以上のMP4（H.264）またはWebMで撮り直すか変換してください。
@@ -1803,8 +2170,15 @@ function ResultsPanel({
   onNewEventGateChange,
   onAddEvent,
   onMoveEvent,
+  onMoveEventEnd,
   onVerifyEvent,
   onDeleteEvent,
+  frameStepMs,
+  canUndo,
+  canRedo,
+  onStepFrame,
+  onUndo,
+  onRedo,
   onExportJson,
   onExportCsv,
   onExportPng,
@@ -1824,8 +2198,15 @@ function ResultsPanel({
   onNewEventGateChange: (gate: "gate-a" | "gate-b") => void;
   onAddEvent: () => void;
   onMoveEvent: (id: string, timestampMs: number) => void;
+  onMoveEventEnd: () => void;
   onVerifyEvent: (id: string) => void;
   onDeleteEvent: (id: string) => void;
+  frameStepMs: number;
+  canUndo: boolean;
+  canRedo: boolean;
+  onStepFrame: (direction: -1 | 1) => void;
+  onUndo: () => void;
+  onRedo: () => void;
   onExportJson: () => void;
   onExportCsv: () => void;
   onExportPng: () => void;
@@ -1834,9 +2215,22 @@ function ResultsPanel({
   const metrics = result.metrics.slice(0, 6);
   const coveragePercent = Math.round(result.quality.coverage * 100);
   const timelineDuration = Math.max(1, result.trim.endMs - result.trim.startMs);
-  const eventStepMs = result.competition.videoInput.effectiveFps
-    ? 1000 / result.competition.videoInput.effectiveFps
-    : 1;
+  const [timelineZoom, setTimelineZoom] = useState(1);
+  const visibleTimelineDuration = timelineDuration / timelineZoom;
+  const visibleTimelineStart = clamp(
+    currentTimeMs - visibleTimelineDuration / 2,
+    result.trim.startMs,
+    Math.max(result.trim.startMs, result.trim.endMs - visibleTimelineDuration),
+  );
+  const visibleTimelineEnd = Math.min(
+    result.trim.endMs,
+    visibleTimelineStart + visibleTimelineDuration,
+  );
+  const visibleEvents = events.filter(
+    (event) =>
+      event.timestampMs >= visibleTimelineStart &&
+      event.timestampMs <= visibleTimelineEnd,
+  );
   return (
     <div className="space-y-6">
       <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-7">
@@ -1949,6 +2343,27 @@ function ResultsPanel({
                 <dd className="mt-1 font-black">{result.calibration.distanceMeters.toFixed(2)} m</dd>
               </div>
             </dl>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => onStepFrame(-1)}
+                className="inline-flex min-h-11 items-center justify-center rounded-xl border border-slate-200 px-3 text-xs font-black hover:border-indigo-300 hover:bg-indigo-50 dark:border-slate-700 dark:hover:bg-indigo-950/50"
+              >
+                <ChevronLeft className="mr-1 h-4 w-4" />
+                1フレーム戻る
+              </button>
+              <button
+                type="button"
+                onClick={() => onStepFrame(1)}
+                className="inline-flex min-h-11 items-center justify-center rounded-xl border border-slate-200 px-3 text-xs font-black hover:border-indigo-300 hover:bg-indigo-50 dark:border-slate-700 dark:hover:bg-indigo-950/50"
+              >
+                1フレーム進む
+                <ChevronRight className="ml-1 h-4 w-4" />
+              </button>
+            </div>
+            <p className="mt-2 text-[11px] leading-5 text-slate-500">
+              左右キーでも1フレームずつ移動できます（約{frameStepMs.toFixed(1)}ms）。
+            </p>
             {result.quality.warnings.length > 0 && (
               <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
                 <p className="font-black">確認ポイント</p>
@@ -1971,15 +2386,61 @@ function ResultsPanel({
             </p>
             <h2 className="mt-2 text-2xl font-black">自動検出をコーチが確定する</h2>
           </div>
-          <p className="text-xs text-slate-500">移動・追加・削除後の内容を書き出せます</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onUndo}
+              disabled={!canUndo}
+              className="inline-flex min-h-10 items-center rounded-xl border border-slate-200 px-3 text-xs font-black disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700"
+            >
+              <Undo2 className="mr-1.5 h-4 w-4" />
+              元に戻す
+            </button>
+            <button
+              type="button"
+              onClick={onRedo}
+              disabled={!canRedo}
+              className="inline-flex min-h-10 items-center rounded-xl border border-slate-200 px-3 text-xs font-black disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700"
+            >
+              <Redo2 className="mr-1.5 h-4 w-4" />
+              やり直す
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 p-3 dark:border-slate-800">
+          <p className="text-xs text-slate-500">
+            表示範囲 {formatTime(visibleTimelineStart)}–{formatTime(visibleTimelineEnd)}
+          </p>
+          <div className="flex items-center gap-1" aria-label="タイムライン拡大率">
+            <ZoomIn className="mr-1 h-4 w-4 text-slate-500" />
+            {[1, 2, 4, 8].map((zoom) => (
+              <button
+                key={zoom}
+                type="button"
+                aria-pressed={timelineZoom === zoom}
+                onClick={() => setTimelineZoom(zoom)}
+                className={`min-h-9 rounded-lg px-3 text-xs font-black ${timelineZoom === zoom ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-indigo-50 dark:bg-slate-800 dark:text-slate-300"}`}
+              >
+                {zoom}×
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="mt-6 rounded-2xl bg-slate-950 px-4 py-6">
           <div className="relative h-12">
             <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-slate-700" />
-            {events.map((event) => {
+            <div
+              className="pointer-events-none absolute inset-y-0 w-px bg-white/70"
+              style={{
+                left: `${clamp((currentTimeMs - visibleTimelineStart) / Math.max(1, visibleTimelineEnd - visibleTimelineStart), 0, 1) * 100}%`,
+              }}
+            />
+            {visibleEvents.map((event) => {
               const position = clamp(
-                (event.timestampMs - result.trim.startMs) / timelineDuration,
+                (event.timestampMs - visibleTimelineStart) /
+                  Math.max(1, visibleTimelineEnd - visibleTimelineStart),
                 0,
                 1,
               );
@@ -1996,8 +2457,8 @@ function ResultsPanel({
             })}
           </div>
           <div className="mt-1 flex justify-between text-[10px] font-bold text-slate-400">
-            <span>{formatTime(result.trim.startMs)}</span>
-            <span>{formatTime(result.trim.endMs)}</span>
+            <span>{formatTime(visibleTimelineStart)}</span>
+            <span>{formatTime(visibleTimelineEnd)}</span>
           </div>
         </div>
 
@@ -2061,13 +2522,16 @@ function ResultsPanel({
                     type="range"
                     min={result.trim.startMs}
                     max={result.trim.endMs}
-                    step={eventStepMs}
+                    step="any"
                     value={event.timestampMs}
                     onChange={(changeEvent) => {
                       const timestampMs = Number(changeEvent.target.value);
                       onMoveEvent(event.id, timestampMs);
-                      onSeek(timestampMs);
                     }}
+                    onPointerUp={onMoveEventEnd}
+                    onPointerCancel={onMoveEventEnd}
+                    onKeyUp={onMoveEventEnd}
+                    onBlur={onMoveEventEnd}
                     className="w-full accent-indigo-600"
                   />
                 </label>

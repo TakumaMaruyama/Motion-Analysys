@@ -145,6 +145,15 @@ This gate has not been run. Before it can pass:
 6. Review start and turn outputs against their separate annotated sets; a pass
    on surface swimming must not be reused as evidence for either event.
 
+Independent coach labels can be created at `/validation`. This local-only
+screen deliberately hides automatic detections and exports a normalized V1
+JSON document without the source filename or path. Each coach must label and
+export separately before adjudication; using the normal analysis result screen
+does not count as independent ground truth because it reveals automatic events.
+Valid labels include the known gate distance and each event's source frame index
+and presentation timestamp. Invalid or unassessable clips are exported with a
+reason and null measurements so they remain part of false-valid-rate testing.
+
 The Swim dataset and decision must satisfy all of the following:
 
 - at least 80 rights-cleared adult videos and at least 20 for each of the four

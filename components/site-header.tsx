@@ -32,6 +32,12 @@ export function SiteHeader() {
             映像は端末内で処理
           </span>
           <Link
+            href="/validation"
+            className="hidden h-10 items-center justify-center rounded-xl border border-slate-200 px-3 text-xs font-bold text-slate-700 transition-colors hover:border-indigo-300 hover:bg-indigo-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary dark:border-slate-700 dark:text-slate-200 dark:hover:bg-indigo-950/50 sm:inline-flex"
+          >
+            検証ラベル
+          </Link>
+          <Link
             href="/#analysis"
             className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 dark:bg-white dark:text-slate-950 dark:hover:bg-indigo-100 dark:focus-visible:ring-offset-slate-950"
           >
