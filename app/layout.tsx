@@ -7,9 +7,9 @@ import { SiteHeader } from "@/components/site-header";
 
 import "../styles/globals.css";
 
-const DEFAULT_TITLE = "MotionAnalysys Beta | 端末内競泳計測";
+const DEFAULT_TITLE = "MotionAnalysys Start Beta | 競泳スタート分析";
 const DESCRIPTION =
-  "固定カメラで撮影した競泳動画ファイルを端末内で処理する、無料・検証中のローカル計測ベータ版です。";
+  "プールサイドから撮影した競泳スタート動画を端末内で処理し、離台・入水・2D前方速度を確認する未検証ベータ版です。";
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
@@ -59,7 +59,7 @@ export async function generateMetadata(): Promise<Metadata> {
           url: socialImage,
           width: 1536,
           height: 1024,
-          alt: "MotionAnalysys Beta — 競泳動画を端末内で参考計測する無料ベータ版。",
+          alt: "MotionAnalysys Start Beta — 競泳スタートを端末内で参考分析する未検証ベータ版。",
         },
       ],
     },

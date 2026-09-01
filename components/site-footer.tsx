@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 const legalLinks = [
+  { href: "/research", label: "研究根拠" },
   { href: "/validation", label: "検証ラベル" },
   { href: "/privacy", label: "プライバシー" },
   { href: "/terms", label: "利用規約" },
@@ -20,7 +21,7 @@ export function SiteFooter() {
               MotionAnalysys
             </Link>
             <p className="mt-3 text-sm leading-6 text-slate-400">
-              固定カメラで撮影した競泳動画から、区間速度とストローク指標を端末内で計測する無料ベータです。
+              固定したプールサイドの側面動画から、競泳スタートの離台・入水・前方速度を端末内で参考計測する無料ベータです。
               動画や分析履歴をクラウドへ保存しません。
             </p>
           </div>
@@ -30,7 +31,7 @@ export function SiteFooter() {
               ご利用前に
             </p>
             <p className="mt-2 text-xs leading-5 text-slate-400">
-              平均速度は利用者が置いた距離ゲートと映像時刻から求める参考値です。公式計時・審判・医療用途には使用できません。
+              自動候補はコーチの確認後にだけ計算へ使います。公式反応時間・失格判定・力・パワー・水中局面は測定できません。
             </p>
           </div>
         </div>

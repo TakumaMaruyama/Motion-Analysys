@@ -1,46 +1,52 @@
-# Release validation
+# MotionAnalysys Start release validation
 
-This checklist separates automated checks from measurements that require the
-target browser, device, camera, and a rights-cleared representative video set.
-A release is not accepted merely because the fields below are blank.
+This checklist separates software checks from validation that requires
+rights-cleared videos, independent coaches, target devices, and ground truth.
+Blank evidence is not a pass.
 
 ## Current beta status
 
-Status as of 2026-08-01: **free local competitive-swimming measurement beta**.
-This label does not mean that the competitive-swimming measurement gates have
-passed.
+Status as of 2026-09-01: **unvalidated local swimming-start analysis beta**.
 
-| Product gate | Status | Required evidence before changing status |
+| Product gate | Status | Evidence required before changing status |
 | --- | --- | --- |
-| Rights-cleared 80-video competitive-swimming validation | **UNVERIFIED** | Recorded ground truth, per-video results, error summary, and signed review covering all four strokes |
-| Start-specific detection and measurement | **PENDING VALIDATION** | Separate annotated start set and coaching-use error thresholds |
-| Turn-specific detection and measurement | **PENDING VALIDATION** | Separate annotated turn set and coaching-use error thresholds |
-| Coach/swimmer field pilot | **UNVERIFIED** | Pilot protocol, consent record, observations, defects, and acceptance decision |
-| Official timing or officiating | **OUT OF SCOPE** | The beta must not claim or imply certification for this purpose |
-| Medical, diagnostic, rehabilitation, or injury prediction | **OUT OF SCOPE** | The beta must not claim or imply suitability for this purpose |
+| Start validation: 80 videos / 20 per stroke | **UNVERIFIED** | Versioned protocol, rights and consent record, two independent label sets, adjudication, predictions, error report |
+| 120fps event accuracy | **UNVERIFIED** | Takeoff and head-entry median ≤1 frame and p90 ≤2 frames |
+| 60fps event accuracy | **UNVERIFIED** | Takeoff and head-entry median ≤2 frames and p90 ≤4 frames |
+| Entry distance accuracy | **UNVERIFIED** | MAE ≤0.25m |
+| 2D forward velocity accuracy | **UNVERIFIED** | MAPE ≤5% against a compatible reference method |
+| Low-quality false-valid rate | **UNVERIFIED** | Less than 5% |
+| Coach field pilot | **UNVERIFIED** | Protocol, consent, workflow findings, defect log, acceptance decision |
+| Official timing or officiating | **OUT OF SCOPE** | The app must not imply certification |
+| Underwater, force, power, work, medical use | **OUT OF SCOPE** | The app must not claim these capabilities |
 
-Do not replace `UNVERIFIED` or `PENDING VALIDATION` with a pass based only on
-automated tests, a model-to-model comparison, demonstrations, or developer
-judgment.
+Do not change `UNVERIFIED` based only on automated tests, developer judgment,
+the existence of published research, or a demonstration video.
 
-## Beta product boundary
+## Product boundary to validate
 
-Validation must use the same boundary described to users:
+- public UI is Start-only; Swim, Turn, and stroke measurement are not imported;
+- freestyle, butterfly, and breaststroke use a dive start;
+- backstroke uses a wall start;
+- users are at least 13 years old;
+- input is a device-selected video from one fixed, side-on, above-water phone;
+- 0m wall, 5m position, and water surface are visible;
+- minimum frame rate is 60fps and 120fps is recommended;
+- video, decoded frames, Pose, events, and results remain in the browser;
+- automatic output is a candidate only;
+- a metric is calculated only when every required event is coach-verified;
+- missing or invalid values are `null`, never zero;
+- only a calibration profile may use same-origin `localStorage`;
+- age and research sex category are session-only and appear only in an explicit
+  user export;
+- no account, DB, cloud history, video upload, external analysis API, LLM, or
+  server-side inference is present;
+- outputs are coaching references, not official timing, officiating, medical
+  assessment, diagnosis, or talent selection.
 
-- input is a video file explicitly selected from the device;
-- the camera is fixed for the recording; live-camera input is not offered;
-- the selectable strokes are freestyle/front crawl, backstroke, breaststroke,
-  and butterfly;
-- video and analysis stay in browser memory;
-- only the calibration profile may persist, in same-origin `localStorage`;
-- there is no account, analysis history, cloud storage, external LLM,
-  generative-AI call, external analysis API, or server-side inference; and
-- outputs are coaching reference estimates, not official times, officiating
-  decisions, or medical results.
+## Automated software gate
 
-## Automated gate
-
-Run:
+Run from the repository root:
 
 ```bash
 npm ci
@@ -48,285 +54,165 @@ npm run audit:prod
 npm run verify
 npx --no-install playwright install chromium webkit
 npm run test:e2e
+npm run validation:start -- --help
 ```
 
-The CI workflow runs the same model-integrity, production-dependency audit,
-typecheck, lint, unit, production-build, Chromium, and WebKit gates.
+`npm run verify` covers pinned assets, model integrity, TypeScript, lint, unit
+tests, and the production build. Record exact command output and commit SHA.
 
-As of 2026-08-01, `npm run audit:prod` reports zero vulnerabilities. The full
-development-dependency audit may still report advisories in the lint/build/test
-toolchain; record and review its current output separately instead of treating
-it as a production-runtime result or forcing incompatible transitive
-overrides.
+The Start acceptance checker requires a real external manifest. Running help,
+unit tests, or a synthetic fixture proves the checker works; it does not prove
+that the 80-video gate passed.
 
-For a rights-cleared fixed-camera video containing one swimmer, run the
-model-backed deterministic golden test:
+## Independent Start annotations
+
+Use `/validation`. This screen must not reveal automatic candidates. Each
+coach labels and exports independently before adjudication.
+
+Each annotation must include:
+
+- anonymous video ID and anonymous annotator ID;
+- stroke, age when available, and research sex category when available;
+- effective frame rate and fixed/side-on/single-swimmer capture declarations;
+- 0m, 5m, and two water-surface calibration points;
+- signal, movement onset, hands off, rear-foot off for dive starts, takeoff,
+  head entry, and optional 5m head crossing;
+- source frame index and presentation timestamp for each available event;
+- `null` for unavailable events or calibration points;
+- rights-cleared, minor-consent, and footage-outside-repository declarations;
+- no source filename, path, URL, participant name, or video bytes.
+
+The two coach IDs must be distinct. Keep raw labels, adjudicated references,
+predictions, consent evidence, and media outside the repository.
+
+## 80-video Start acceptance gate
+
+Before looking at aggregate results:
+
+1. Freeze the protocol, event definitions, exclusion rules, metrics, and
+   thresholds.
+2. Obtain lawful rights and required consent for at least 80 videos.
+3. Include at least 20 videos for each of freestyle, butterfly, breaststroke,
+   and backstroke.
+4. Include both 60fps and 120fps evidence in every event-error report.
+5. Deliberately include no-signal, foot occlusion, splash, multiple-person,
+   camera-motion, and invisible-5m cases.
+6. Have two coaches annotate every clip independently before adjudication.
+7. Preserve failed, excluded, invalid, and unassessable clips in the report.
+8. Compare predictions from the exact release candidate against adjudicated
+   references.
+
+Run:
 
 ```bash
-MOTION_ANALYSIS_GOLDEN_VIDEO=/absolute/path/to/video.webm \
-  npm run test:e2e -- --grep "同一動画"
+npm run validation:start -- /absolute/path/to/start-validation.json
 ```
 
-It analyzes the file twice and requires exactly matching presentation
-timestamps, detected events, six measurements, and exported CSV bytes. The test
-is skipped during ordinary CI when the private validation video is not
-provided; a release record must not count a skipped run as evidence.
+Acceptance requires all of the following:
 
-## Model comparison gate
+- at least 80 valid reference clips;
+- at least 20 valid reference clips for each stroke;
+- 120fps takeoff/head-entry error: median ≤1 frame, p90 ≤2 frames;
+- 60fps takeoff/head-entry error: median ≤2 frames, p90 ≤4 frames;
+- entry-distance MAE ≤0.25m with no missing valid-case values;
+- calibrated 2D forward-velocity MAPE ≤5% with no missing valid-case values;
+- false-valid rate on intentionally invalid/low-quality clips <5%; and
+- unavailable results remain `null`.
 
-Use ten or more representative competitive-swimming videos that may legally be
-used for internal model comparison. Include all four supported strokes, but do
-not treat this 10-video comparison as the separate 80-video product-validation
-gate. Do not commit participant videos or identifying filenames. Run Pose
-Landmarker Full and MoveNet Thunder as separate development benchmarks;
-MoveNet must not be bundled into the production application.
-
-Create a local JSON report with this shape:
-
-```json
-{
-  "schemaVersion": "1.0",
-  "videos": [
-    {
-      "id": "anonymous-video-01",
-      "samples": [
-        {
-          "timestampMs": 1200,
-          "metric": "leftKneeAngle",
-          "poseLandmarkerFullDeg": 142.5,
-          "moveNetThunderDeg": 147.1
-        }
-      ]
-    }
-  ],
-  "liveRuns": [
-    {
-      "device": "target-device-id",
-      "browser": "Chrome current",
-      "poseLandmarkerFullFps": 18.2
-    }
-  ]
-}
-```
-
-Then run:
-
-```bash
-npm run benchmark:check -- /absolute/path/to/benchmark-report.json
-```
-
-The command exits unsuccessfully unless all of these conditions hold:
-
-- at least 10 unique videos;
-- median absolute Full-versus-Thunder angle difference at most 7 degrees;
-- p90 absolute angle difference at most 15 degrees;
-- every recorded target-device Full live run at least 15 fps.
-
-`liveRuns` is the current benchmark-report schema name for a developer
-throughput measurement. It does not authorize or document a live-camera input
-in the beta product.
-
-Failure stops the release. It must not trigger an automatic production-model
-switch to MoveNet Thunder.
-
-## 80-video competitive-swimming gate — unverified
-
-This gate has not been run. Before it can pass:
-
-1. Define the validation protocol, ground-truth annotation rules, error
-   measures, and acceptance thresholds before looking at aggregate results.
-2. Obtain lawful consent and usage rights for at least 80 fixed-camera videos.
-3. Cover freestyle/front crawl, backstroke, breaststroke, and butterfly, and
-   record the relevant camera view, pool configuration, resolution, frame rate,
-   lighting, occlusion, and swimmer level for every video.
-4. Keep an immutable mapping from anonymized video ID to annotations and app
-   version without committing participant media or identifying filenames.
-5. Report failures and excluded videos as well as successful measurements.
-6. Review start and turn outputs against their separate annotated sets; a pass
-   on surface swimming must not be reused as evidence for either event.
-
-Independent coach labels can be created at `/validation`. This local-only
-screen deliberately hides automatic detections and exports a normalized V1
-JSON document without the source filename or path. Each coach must label and
-export separately before adjudication; using the normal analysis result screen
-does not count as independent ground truth because it reveals automatic events.
-Valid labels include the known gate distance and each event's source frame index
-and presentation timestamp. Invalid or unassessable clips are exported with a
-reason and null measurements so they remain part of false-valid-rate testing.
-
-The Swim dataset and decision must satisfy all of the following:
-
-- at least 80 rights-cleared adult videos and at least 20 for each of the four
-  strokes;
-- two different coaches independently label every gate crossing and stroke
-  event before adjudication;
-- exact stroke-count agreement on at least 95% of supported-condition clips;
-- cycle-rate mean absolute error at most 3 cycles/min;
-- average-speed mean absolute percentage error at most 3%;
-- gate-crossing error median at most 1 source frame and p90 at most 2 frames;
-- fewer than 1% of known low-quality clips incorrectly reported as valid; and
-- unknown or suppressed values remain `null` and are never substituted with
-  zero.
-
-Store the anonymized labels and predictions outside the repository, then run:
-
-```bash
-npm run validation:swim -- /absolute/path/to/swim-validation.json
-```
-
-For every coach label, adjudicated reference, and prediction, the manifest must
-store `strokeEventFrames` as a strictly increasing source-frame array whose
-length equals `strokeCount`; valid events must fall between the two labeled
-gate frames. Unavailable measurements use `null`, never an empty or zero
-sentinel. This preserves the two independent event-level label sets instead of
-retaining only their aggregate counts.
-
-The command is only a deterministic threshold checker. It does not establish
-consent, labeling independence, recording conditions, or the correctness of
-the supplied reference data by itself.
+The command only checks the supplied manifest. It cannot verify that consent
+was genuine, labeling was independent, the camera was fixed, or the reference
+method was correct.
 
 Record:
 
 | Field | Result |
 | --- | --- |
 | Protocol/version | UNVERIFIED |
-| Rights-cleared adult videos | 0 / 80 verified in this repository |
-| Per-stroke minimum | 0 / 20 verified for each stroke |
-| Independent coach labels | 0 / 2 verified per video |
-| All four strokes represented | UNVERIFIED |
-| Ground-truth review | UNVERIFIED |
-| Stroke-count exact agreement ≥95% | UNVERIFIED |
-| Cycle-rate MAE ≤3 cycles/min | UNVERIFIED |
-| Average-speed MAPE ≤3% | UNVERIFIED |
-| Gate error median ≤1 frame / p90 ≤2 frames | UNVERIFIED |
-| False-valid rate on low-quality clips <1% | UNVERIFIED |
-| Start validation | PENDING |
-| Turn validation | PENDING |
-| Acceptance decision and evidence link | UNVERIFIED |
+| Release SHA | UNVERIFIED |
+| Rights-cleared videos | 0 / 80 verified in this repository |
+| Freestyle | 0 / 20 verified |
+| Butterfly | 0 / 20 verified |
+| Breaststroke | 0 / 20 verified |
+| Backstroke | 0 / 20 verified |
+| Two independent coaches | UNVERIFIED |
+| Adjudication complete | UNVERIFIED |
+| 120fps median/p90 | UNVERIFIED |
+| 60fps median/p90 | UNVERIFIED |
+| Entry-distance MAE | UNVERIFIED |
+| 2D velocity MAPE | UNVERIFIED |
+| Low-quality false-valid rate | UNVERIFIED |
+| Acceptance owner and decision | UNVERIFIED |
 
-## Field-pilot gate — unverified
-
-The coach pilot has not been completed. It must run for four weeks with at
-least five adult coaches and at least 100 total analyses. At least 80% of
-analyses must be completed without assistance, and at least four of the five
-coaches must say that they want to continue using the tool before general
-release. A pilot record must identify
-the app version, participating environment, consent process, fixed-camera setup,
-task completion time, corrections to automatically produced measurements,
-misleading or unusable outputs, participant feedback, and the decision owner.
-Do not infer pilot acceptance from web analytics, downloads, or informal demos.
-
-| Field | Result |
-| --- | --- |
-| Pilot protocol/version | UNVERIFIED |
-| Consent and media-handling review | UNVERIFIED |
-| Adult coaches | 0 / 5 verified |
-| Pilot duration | 0 / 4 weeks verified |
-| Total analyses | 0 / 100 verified |
-| Unassisted completion | UNVERIFIED (target ≥80%) |
-| Continued-use preference | UNVERIFIED (target ≥4 / 5 coaches) |
-| Measurement-correction rate | UNVERIFIED |
-| Workflow time and usability findings | UNVERIFIED |
-| Safety/privacy incidents | UNVERIFIED |
-| Acceptance decision and evidence link | UNVERIFIED |
-
-## Local-only privacy gate
-
-On both target browsers, use developer tools or an equivalent network capture
-while loading the app, selecting a video, creating and deleting a calibration
-profile, running an analysis, and exporting results. Confirm that:
-
-- video bytes, decoded frames, landmarks, measurements, exports, and
-  calibration values are not present in network requests;
-- no LLM, generative-AI, external analysis API, telemetry, or advertising
-  endpoint is contacted;
-- runtime requests after page load are limited to expected same-origin app,
-  model, WASM, and navigation resources;
-- reloading does not restore a prior video or analysis result;
-- the calibration profile persists only in same-origin `localStorage`; and
-- clearing site data removes that profile.
-
-Record request logs and storage screenshots without participant images or
-identifying filenames.
+If an automatic event fails a threshold, demote that event to manual-only.
+Do not relax the threshold after inspecting results without a new protocol
+version and independent holdout set.
 
 ## Browser scenario matrix
 
-Record the app version, OS, device, browser version, input properties, and
-result for each row. Run the matrix on current Chrome and current Safari.
+Run on current Chrome and Safari using target poolside phones/tablets. Record
+app SHA, OS, browser version, device, video properties, and evidence.
 
 | Scenario | Expected result |
 | --- | --- |
-| No person | No numeric result; retry guidance |
-| Multiple people | Quality is rejected; no swimmer is silently selected |
-| Heavy splash / occlusion | Uncertain events require review or remain unavailable |
-| Full body outside frame | Missing points suppress dependent values |
-| Low light | Low-confidence values are suppressed |
-| Partial occlusion | Only metrics whose required points are reliable appear |
-| Camera movement / zoom | Calibration warning; result is not marked valid |
-| Portrait video | Preview, analysis, overlay, and export preserve orientation |
-| Landscape video | Preview, analysis, overlay, and export preserve orientation |
-| Below 30fps Swim video | Preview may work; precision analysis remains disabled |
-| Unsupported codec | Preview may work; clear re-record/convert guidance; no precision result |
-| Analysis cancellation | Returns to a usable preview without stale result |
-| Manual marker add/move/delete | Event becomes verified and all six metrics recalculate |
-| Live-camera input | No live-camera capture control or permission request is exposed |
-| Unsupported media | Clear format error; app remains usable |
-| Reload after analysis | Previous video and result are not restored |
-| Calibration profile reload | Profile persists only in same-origin `localStorage` |
-| Calibration profile reuse | Saved gates are overlaid and require visual confirmation |
-| Site-data deletion | Calibration profile is removed |
+| 13 years old | Analysis may proceed |
+| Under 13 | Analysis cannot start |
+| 33 or older | Analysis may proceed; no research band |
+| 120fps fixed side view | Recommended-condition message |
+| 60fps fixed side view | Allowed with precision warning |
+| Below 60fps | Precision analysis disabled |
+| No audible signal / no flash | Signal remains unavailable or manual-only |
+| Feet occluded | Takeoff remains review/unavailable; dependent metrics null |
+| Heavy splash at entry | Head entry remains review/unavailable |
+| Multiple people | Quality rejected; no silent swimmer selection |
+| Camera pan, zoom, or rotation | Calibration/quality rejected |
+| 5m not visible | 5m metric and percentile unavailable |
+| External stopwatch 5m value | May be stored as external; never used for percentile |
+| Dive start | Rear-foot-off event is available for review |
+| Backstroke start | Dive-only rear-foot-off is absent |
+| Candidate event | No dependent numeric metric |
+| Verify event | Only its satisfied dependent metrics recalculate |
+| Undo/redo correction | Events, metrics, and bands return deterministically |
+| Head-entry point click | Entry distance uses the selected point |
+| Right-to-left travel | Calibrated forward distance remains positive |
+| Unsupported codec | Clear error and usable reset path |
+| Reload | Video, results, age, and research sex are not restored |
+| Calibration reuse | Only calibration is restored and requires visual confirmation |
 
-## Workflow performance gate
+## Research-reference gate
 
-Using a 10-second 1080p60 supported video and an already saved calibration on
-each target Chrome and Safari device:
+For every release that changes `lib/start/references.ts`:
 
-- the coach can select the video, confirm the overlaid calibration, and start
-  analysis within 30 seconds; and
-- the result screen appears within 90 seconds of starting analysis.
+- compare all 32 records against Born et al. (2026), Appendix A, Tables A1–A8;
+- verify exact P3/P10/P25/P50/P75/P90/P97 values;
+- verify stroke and sex mapping;
+- verify block versus wall-contact naming for backstroke;
+- verify explicit performance direction;
+- verify age 13–32 display and age 33+ suppression;
+- verify entry-time and entry-distance are labeled as method-sensitive;
+- verify attribution, DOI, CC BY 4.0, and transformation notice on `/research`
+  and `/licenses`;
+- verify no grade, pass/fail, talent label, or composite score is generated.
 
-Record median and worst-case times, device temperature/power state, browser
-version, whether hardware decoding was available, and any excluded or failed
-run. A developer desktop result cannot substitute for the target poolside
-device.
+## Local-only privacy gate
+
+Using a network capture on both target browsers, load the app, select a video,
+run candidate analysis, confirm events, export results, and reload. Confirm:
+
+- video bytes, decoded frames, landmarks, events, metrics, calibration, age,
+  research sex category, and exports do not appear in network requests;
+- runtime requests are limited to same-origin app, model, WASM, and navigation
+  resources;
+- no LLM, generative AI, external analysis API, telemetry, or ad endpoint is
+  contacted;
+- reload does not restore video, analysis, age, or research sex category;
+- only calibration may remain in same-origin `localStorage`; and
+- clearing site data removes calibration.
+
+Capture logs without participant images, names, or source filenames.
 
 ## Publication transition
 
-The limited beta remains free, link-shared, and `noindex` while any 80-video,
-performance, or field-pilot gate is unverified. Remove the beta label and
-`noindex` only after the evidence above is reviewed and accepted. Turn and Start
-remain visibly marked as under validation and may be enabled independently only
-after their own annotated accuracy gates pass.
-
-## Memory and repeated-analysis gate
-
-On each target browser:
-
-1. Warm up the application with a short analysis.
-2. Record a heap snapshot or browser memory timeline.
-3. Analyze a rights-cleared local video at least five times, returning to input
-   between runs.
-4. Analyze a longer rights-cleared local video that represents the intended
-   beta workload.
-5. Force or wait for garbage collection when the browser tooling permits it,
-   then record another snapshot.
-6. Confirm that detached video elements, `ImageBitmap`, raw `ImageData`, and
-   Worker instances do not accumulate per sampled frame or per completed run.
-
-Record:
-
-| Field | Result |
-| --- | --- |
-| App commit | |
-| Device / OS | |
-| Browser / version | |
-| Video repetitions | |
-| Long-video duration / properties | |
-| Initial retained heap | |
-| Final retained heap after cleanup | |
-| Outstanding raw-frame objects | |
-| Detached elements / Workers | |
-| Pass / fail and evidence link | |
-
-An initial model/WASM allocation or bounded cache is expected. A retained-heap
-trend that grows with elapsed frames or completed runs fails the release.
+Keep the visible `未検証ベータ` label and `noindex` while the Start validation,
+target-browser, privacy, and field-pilot gates are unverified. A successful
+build or Sites deployment does not change validation status. Publishing is a
+separate authorized operation and is not part of this checklist run.

@@ -19,6 +19,7 @@
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "benchmark:check": "node scripts/check-model-benchmark.mjs",
     "validation:swim": "node --experimental-strip-types scripts/check-swim-acceptance.mjs",
+    "validation:start": "node --experimental-strip-types scripts/check-start-acceptance.mjs",
     "verify:model": "node scripts/verify-model.mjs",
     "verify": "npm run assets:prepare && npm run verify:model && npm run typecheck && npm run lint && npm run test:unit && npm run build"
   },
@@ -51,6 +52,7 @@
     "wrangler": "4.92.0"
   },
   "overrides": {
+    "nanoid": "3.3.18",
     "postcss": "8.5.25",
     "sharp": "0.35.3"
   }

@@ -112,3 +112,24 @@ the license selected by its original provider.
 MotionAnalysys used PINTO_model_zoo only as model-selection research. It does
 not include or derive from any PINTO_model_zoo conversion script, converted
 model, sample, or other repository artifact.
+
+## Born et al. (2026) swimming-start reference data
+
+- Work: *Engineering Elite Swimming Start Performance: Key Kinetic and
+  Kinematic Variables with Reference Values*
+- Authors: Dennis-Peter Born, Lina Nussbaumer, Markus Buck, Jesús J.
+  Ruiz-Navarro, and Michael Romann
+- Publication: Bioengineering 2026, 13(2), 180
+- DOI: <https://doi.org/10.3390/bioengineering13020180>
+- Data used: Appendix A, Tables A1–A8, selected P3/P10/P25/P50/P75/P90/P97
+  values for block/wall contact time, entry time, entry distance, and 5 m time
+- Copyright: © 2026 by the authors
+- License: [Creative Commons Attribution 4.0
+  International](https://creativecommons.org/licenses/by/4.0/)
+
+MotionAnalysys transcribes the selected table values to versioned TypeScript
+records and changes their presentation to explicit performance-direction bands
+such as `P25–P50`. Original percentile labels remain in the stored source
+records; display calculation defines shorter time and longer distance as the
+higher-performance directions. No composite grade, pass/fail result, or talent
+prediction is derived from the data.

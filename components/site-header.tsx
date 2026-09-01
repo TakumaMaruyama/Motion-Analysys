@@ -21,7 +21,7 @@ export function SiteHeader() {
               MotionAnalysys
             </span>
             <span className="mt-1 hidden text-[10px] font-medium leading-none tracking-[0.14em] text-slate-500 dark:text-slate-400 sm:block">
-              LOCAL SWIM METRICS · BETA
+              LOCAL START ANALYSIS · BETA
             </span>
           </span>
         </Link>
@@ -41,7 +41,7 @@ export function SiteHeader() {
             href="/#analysis"
             className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 dark:bg-white dark:text-slate-950 dark:hover:bg-indigo-100 dark:focus-visible:ring-offset-slate-950"
           >
-            Swim計測を始める
+            スタート分析を始める
           </Link>
         </nav>
       </div>

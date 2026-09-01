@@ -4,7 +4,7 @@ import { LegalPage, LegalSection } from "@/components/legal-page";
 export const metadata: Metadata = {
   title: "ライセンス | MotionAnalysys",
   description:
-    "MotionAnalysysが競泳動画の端末内計測に利用するMediaPipe、Mediabunny、Pose Landmarkerモデルのライセンス情報です。",
+    "MotionAnalysys Startが端末内分析に利用するソフトウェア、姿勢モデル、研究参考データのライセンス情報です。",
 };
 
 const apacheLicense = `Apache License
@@ -213,8 +213,8 @@ export default function LicensesPage() {
   return (
     <LegalPage
       title="ライセンス"
-      description="競泳動画の端末内計測に使用する動画読込みライブラリ、姿勢推定ランタイム、モデル、主要な実行時ライブラリの出所、バージョン、ライセンスを掲載します。"
-      lastUpdated="2026年8月1日"
+      description="競泳スタート動画の端末内分析に使用する動画読込みライブラリ、姿勢推定ランタイム、モデル、研究参考データ、主要な実行時ライブラリの出所、バージョン、ライセンスを掲載します。"
+      lastUpdated="2026年9月1日"
     >
       <LegalSection id="mediapipe-runtime" title="MediaPipe Tasks Vision">
         <dl className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/70 sm:grid-cols-[10rem_1fr]">
@@ -340,6 +340,37 @@ export default function LicensesPage() {
         </p>
         <p>
           公式task artifactとモデルカードには独立した著作権文言が添付されていないため、別配布物であるPINTO_model_zooの著作権表示は流用していません。代わりに、公式モデルカードが示す作者、日付、ライセンスと、取得したartifactの固定generation、サイズ、SHA-256を記録しています。
+        </p>
+      </LegalSection>
+
+      <LegalSection id="born-reference-data" title="Born et al. (2026) スタート参考値">
+        <dl className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/70 sm:grid-cols-[10rem_1fr]">
+          <dt className="font-semibold text-slate-900 dark:text-white">論文</dt>
+          <dd>
+            Engineering Elite Swimming Start Performance: Key Kinetic and Kinematic Variables with Reference Values
+          </dd>
+          <dt className="font-semibold text-slate-900 dark:text-white">著者</dt>
+          <dd>Dennis-Peter Born、Lina Nussbaumer、Markus Buck、Jesús J. Ruiz-Navarro、Michael Romann</dd>
+          <dt className="font-semibold text-slate-900 dark:text-white">DOI</dt>
+          <dd>
+            <a href="https://doi.org/10.3390/bioengineering13020180" target="_blank" rel="noreferrer">
+              10.3390/bioengineering13020180
+            </a>
+          </dd>
+          <dt className="font-semibold text-slate-900 dark:text-white">対象データ</dt>
+          <dd>Appendix A, Tables A1–A8の種目・男女別P3／P10／P25／P50／P75／P90／P97</dd>
+          <dt className="font-semibold text-slate-900 dark:text-white">ライセンス</dt>
+          <dd>
+            <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">
+              Creative Commons Attribution 4.0 International
+            </a>
+          </dd>
+        </dl>
+        <p>
+          © 2026 by the authors. MotionAnalysys Startは、対象範囲のうちブロック／壁接触時間、入水時間、入水距離、5m時間を機械可読な静的データへ転記しています。原表のP値を保持しつつ、表示では時間を短い方向、距離を長い方向が高パフォーマンスとなる帯へ変換し、「P25〜P50」の形式に変更しています。
+        </p>
+        <p>
+          研究対象は13〜32歳のスイス代表選手です。参考帯は合否、才能、診断、総合評価ではありません。実装上の解釈と他の参照研究は<a href="/research">研究根拠ページ</a>で確認できます。
         </p>
       </LegalSection>
 

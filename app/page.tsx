@@ -1,4 +1,4 @@
-import { SwimAnalysisWorkspace } from "@/components/swim-analysis-workspace";
+import { StartAnalysisWorkspace } from "@/components/start-analysis-workspace";
 
 export default function HomePage() {
   return (
@@ -9,24 +9,24 @@ export default function HomePage() {
           <div className="max-w-3xl">
             <p className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold tracking-wide text-indigo-700 dark:border-indigo-900 dark:bg-indigo-950/70 dark:text-indigo-300">
               <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-              POOL-SIDE SWIM ANALYSIS
+              POOL-SIDE START ANALYSIS
             </p>
             <h1 className="mt-5 text-balance text-4xl font-black tracking-tight text-slate-950 dark:text-white sm:text-5xl lg:text-6xl">
-              1本の泳ぎを、
+              1本のスタートを、
               <span className="text-indigo-600 dark:text-indigo-400">
-                速度とストローク
+                前方速度と入水
               </span>
               で返す。
             </h1>
             <p className="mt-5 max-w-2xl text-base leading-8 text-slate-600 dark:text-slate-300 sm:text-lg">
-              固定カメラの動画から、区間タイム・平均速度・ストローク指標を算出します。自動検出したイベントはコーチが映像と照合し、その場で補正できます。
+              固定したプールサイドの側面動画から、離台・飛行・入水を局面別に参考計測します。自動候補はコーチが映像と照合してから結果へ反映します。
             </p>
           </div>
           <div className="grid grid-cols-2 gap-3">
             {[
-              ["30秒", "最大解析区間"],
-              ["2本", "距離ゲート"],
-              ["4泳法", "Swim分析"],
+              ["60fps", "最低撮影速度"],
+              ["120fps", "推奨撮影速度"],
+              ["0–5m", "対象画角"],
               ["0", "動画アップロード"],
             ].map(([value, label]) => (
               <div
@@ -46,23 +46,23 @@ export default function HomePage() {
       </section>
 
       <section id="analysis" className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 md:py-14 lg:px-8">
-        <SwimAnalysisWorkspace />
+        <StartAnalysisWorkspace />
       </section>
 
       <section className="border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
         <div className="mx-auto grid w-full max-w-7xl gap-6 px-4 py-12 sm:px-6 md:grid-cols-3 lg:px-8">
           {[
             [
-              "泳者を横から固定撮影",
-              "カメラを動かさず、泳者とレーンロープの目印が同じ画面に入る位置で撮影します。Swim分析は30fps以上を使用してください。",
+              "スタートを真横から固定撮影",
+              "カメラを動かさず、スタート台・水面・5m位置が同じ画面に入る位置で撮影します。最低60fps、120fps以上を推奨します。",
             ],
             [
-              "既知の距離で校正",
-              "5mラインなど実距離が分かる2点へゲートA・Bを合わせます。同じカメラ位置なら校正をこの端末で再利用できます。",
+              "0m・5m・水面を校正",
+              "壁の0m、5m位置、水面を映像上で指定し、前方移動を2Dの参考値へ換算します。斜め撮影や水中値は対象外です。",
             ],
             [
-              "最後はコーチが確定",
-              "ゲート通過と左右または両手のストロークマーカーを映像で確認し、追加・移動・削除してから記録を書き出します。",
+              "候補イベントはコーチが確定",
+              "号砲・初動・離台・頭頂入水を1フレーム単位で確認し、確定したイベントだけから指標と参考帯を表示します。",
             ],
           ].map(([title, body], index) => (
             <article
