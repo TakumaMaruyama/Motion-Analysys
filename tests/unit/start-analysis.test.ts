@@ -175,6 +175,36 @@ describe("start analysis", () => {
     expect(result.quality.warnings.join(" ")).toContain("斜め撮影");
   });
 
+  it("allows different start events to share one 30fps frame without suppressing time results", () => {
+    const events = [
+      event("signal", 100),
+      event("hands-off", 233),
+      event("movement-onset", 233),
+      event("rear-foot-off", 800),
+      event("takeoff", 800),
+      event("head-entry", 1_133),
+      event("five-meter-head-crossing", 2_400),
+    ];
+    const result = buildStartAnalysisResult({
+      analysisMode: "timing-only",
+      athlete: { strokeStyle: "freestyle", age: 16, researchSexCategory: "male" },
+      video: { ...VIDEO, effectiveFps: 30, fixedCamera: false, sideOn: false },
+      calibration: null,
+      events,
+    });
+
+    expect(result.quality.status).toBe("needs-review");
+    expect(result.quality.warnings.join(" ")).not.toContain("時系列順序が不正");
+    expect(result.metrics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "movement-onset-time", value: 133, status: "verified" }),
+      expect.objectContaining({ id: "block-contact-time", value: 700, status: "verified" }),
+      expect.objectContaining({ id: "push-off-time", value: 567, status: "verified" }),
+      expect.objectContaining({ id: "flight-time", value: 333, status: "verified" }),
+      expect.objectContaining({ id: "entry-time", value: 1_033, status: "verified" }),
+      expect.objectContaining({ id: "five-meter-time", value: 2_300, status: "verified" }),
+    ]));
+  });
+
   it("rejects footage below 30fps even in timing-only mode", () => {
     const result = buildStartAnalysisResult({
       analysisMode: "timing-only",

@@ -235,6 +235,7 @@ export function StartAnalysisWorkspace() {
   const [future, setFuture] = useState<readonly HistorySnapshot[]>([]);
   const [analysisProgress, setAnalysisProgress] = useState<{ percentage: number; message: string } | null>(null);
   const [automaticAnalysisCompleted, setAutomaticAnalysisCompleted] = useState(false);
+  const [automaticModeNotice, setAutomaticModeNotice] = useState<string | null>(null);
   const [externalFiveMeterTimeMs, setExternalFiveMeterTimeMs] = useState<number | null>(null);
   const [revisionHistory, setRevisionHistory] = useState<readonly StartEventRevision[]>([]);
 
@@ -404,6 +405,7 @@ export function StartAnalysisWorkspace() {
     setCalibrationMarks({});
     setCalibrationTarget(null);
     setExternalFiveMeterTimeMs(null);
+    setAutomaticModeNotice(null);
     setFixedCamera(null);
     setSideOn(null);
     setSingleSwimmer(null);
@@ -422,6 +424,7 @@ export function StartAnalysisWorkspace() {
     setCalibrationMarks({});
     setCalibrationTarget(null);
     setExternalFiveMeterTimeMs(null);
+    setAutomaticModeNotice(null);
     setAnalysisMode(nextMode);
   }, [analysisMode, clearAnalysisEvidence]);
 
@@ -437,13 +440,23 @@ export function StartAnalysisWorkspace() {
     if (!nextFile) return;
     try {
       const inspected = await inspectCompetitionVideo(nextFile);
-      if (fileRequestRef.current === requestId) setMetadata(inspected);
+      if (fileRequestRef.current === requestId) {
+        setMetadata(inspected);
+        const precisionAssessment = getStartFpsAssessment(inspected, "precision");
+        const timingAssessment = getStartFpsAssessment(inspected, "timing-only");
+        if (analysisMode === "precision" && !precisionAssessment.allowed && timingAssessment.allowed) {
+          setAnalysisMode("timing-only");
+          setAutomaticModeNotice(
+            "60fps未満の動画のため、30fps対応の簡易タイムモードへ切り替えました。確認済みイベントから時間結果を表示します。",
+          );
+        }
+      }
     } catch (reason) {
       if (fileRequestRef.current === requestId) {
         setError(reason instanceof Error ? reason.message : "動画を読み込めませんでした。");
       }
     }
-  }, [resetForNewVideo]);
+  }, [analysisMode, resetForNewVideo]);
 
   const handleCalibrationClick = useCallback((event: MouseEvent<HTMLVideoElement>) => {
     if (!calibrationTarget) return;
@@ -751,6 +764,7 @@ export function StartAnalysisWorkspace() {
             fixedCamera={fixedCamera}
             fps={fps}
             metadata={metadata}
+            modeNotice={automaticModeNotice}
             onFile={handleFile}
             onModeChange={handleAnalysisModeChange}
             onNext={() => setActiveStep(1)}
@@ -842,6 +856,7 @@ function VideoAndProfileStep({
   fixedCamera,
   fps,
   metadata,
+  modeNotice,
   onFile,
   onModeChange,
   onNext,
@@ -861,6 +876,7 @@ function VideoAndProfileStep({
   readonly fixedCamera: boolean | null;
   readonly fps: number | null;
   readonly metadata: CompetitionVideoMetadata | null;
+  readonly modeNotice: string | null;
   readonly onFile: (file: File | null) => void;
   readonly onModeChange: (mode: StartAnalysisMode) => void;
   readonly onNext: () => void;
@@ -946,6 +962,7 @@ function VideoAndProfileStep({
           {assessment?.allowed && assessment.message ? <p className="mt-1 text-amber-800">{assessment.message}</p> : null}
         </div>
       ) : null}
+      {modeNotice ? <p className="mt-3 rounded-xl bg-sky-50 p-3 text-sm font-bold text-sky-950">{modeNotice}</p> : null}
       {analysisMode === "precision" && age > 32 ? <p className="mt-3 text-sm text-amber-800">33歳以上は解析できますが、Born 2026の参考帯は表示しません。</p> : null}
 
       <div className="mt-4 grid gap-2 text-sm">

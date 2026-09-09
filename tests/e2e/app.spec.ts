@@ -178,14 +178,13 @@ test("未確認イベントは結果を作らずUndoで戻せる", async ({ page
   await expect(blockMetric.getByText("—", { exact: true })).toBeVisible();
 });
 
-test("30fps動画は精密では拒否し簡易タイムでは斜めのまま進める", async ({ page, browserName }) => {
+test("30fps動画は自動で簡易タイムへ切り替わる", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "WebMコンテナ検査はChromiumで確認します。");
   await page.goto("/");
   await expect(page.getByTestId("start-analysis-workspace")).toHaveAttribute("data-hydrated", "true");
   await setGeneratedBlankVideo(page, 30);
-  await expect(page.getByText(/Start解析には60fps以上/)).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByRole("button", { name: "次へ：校正" })).toBeDisabled();
-  await page.getByLabel("簡易タイムモード").check();
+  await expect(page.getByLabel("簡易タイムモード")).toBeChecked({ timeout: 30_000 });
+  await expect(page.getByText(/簡易タイムモードへ切り替えました/)).toBeVisible();
   await expect(page.getByText(/1フレーム約33ms/)).toBeVisible();
   await page.getByLabel(/1レーン・1選手を確認/).check();
   await expect(page.getByLabel(/固定カメラを確認/)).not.toBeChecked();
@@ -223,8 +222,8 @@ test("30fps簡易タイムを手動確定して再現可能な結果を保存す
   test.skip(browserName !== "chromium", "生成WebMのメタデータ検査はChromiumで確認します。");
   await page.goto("/");
   await expect(page.getByTestId("start-analysis-workspace")).toHaveAttribute("data-hydrated", "true");
-  await page.getByLabel("簡易タイムモード").check();
   await setGeneratedBlankVideo(page, 30);
+  await expect(page.getByLabel("簡易タイムモード")).toBeChecked({ timeout: 30_000 });
   await expect(page.getByText(/1フレーム約33ms/)).toBeVisible({ timeout: 30_000 });
   await page.getByLabel(/1レーン・1選手を確認/).check();
   await page.getByRole("button", { name: /自動判定・確認/ }).click();
@@ -236,17 +235,23 @@ test("30fps簡易タイムを手動確定して再現可能な結果を保存す
   };
   await confirmEvent("号砲／スタート信号", "0.100");
   await confirmEvent("初動", "0.233");
+  await confirmEvent("手の離台", "0.233");
+  await confirmEvent("後足の離台", "0.800");
   await confirmEvent("離台", "0.800");
   await confirmEvent("頭頂入水", "1.133");
   await confirmEvent("5m頭頂通過（任意）", "2.400");
 
   await page.getByRole("button", { name: /時間結果/ }).click();
-  const blockMetric = page.getByText("ブロック／壁接触時間", { exact: true }).locator("..");
-  const flightMetric = page.getByText("飛行時間", { exact: true }).locator("..");
-  const fiveMeterMetric = page.getByText("5m時間", { exact: true }).locator("..");
-  await expect(blockMetric).toContainText("700.00 ms");
-  await expect(flightMetric).toContainText("333.00 ms");
-  await expect(fiveMeterMetric).toContainText("2300.00 ms");
+  for (const [label, value] of [
+    ["初動時間", "133.00 ms"],
+    ["ブロック／壁接触時間", "700.00 ms"],
+    ["動作開始後の押し出し時間", "567.00 ms"],
+    ["飛行時間", "333.00 ms"],
+    ["入水時間", "1033.00 ms"],
+    ["5m時間", "2300.00 ms"],
+  ]) {
+    await expect(page.getByText(label, { exact: true }).locator("..")).toContainText(value);
+  }
 
   const jsonDownloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "JSON" }).click();

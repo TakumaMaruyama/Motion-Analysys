@@ -159,7 +159,10 @@ export function validateStartEventSequence(
   for (const event of events
     .filter((item) => (item.status === "confirmed" || item.status === "verified") && item.timestampMs !== null)
     .slice()
-    .sort((first, second) => (first.timestampMs! - second.timestampMs!) || first.id.localeCompare(second.id))) {
+    .sort((first, second) =>
+      (first.timestampMs! - second.timestampMs!) ||
+      (eventOrder(first.type) - eventOrder(second.type)) ||
+      first.id.localeCompare(second.id))) {
     if (seen.has(event.type)) errors.push(`イベント ${event.type} が重複しています。`);
     seen.add(event.type);
     if (startStyle === "backstroke" && event.type === "rear-foot-off") {
