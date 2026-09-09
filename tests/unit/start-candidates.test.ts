@@ -109,4 +109,26 @@ describe("start automatic candidates", () => {
     expect(eventAt(events, "signal").status).toBe("unavailable");
     expect(events.every((event) => event.status !== "verified")).toBe(true);
   });
+
+  it("keeps early timing candidates but withholds entry and 5m without calibration", () => {
+    const frames = [
+      poseFrame(0, { trunkX: 0.2, wristX: 0.2, leftFootX: 0.1, rightFootX: 0.15, headX: 0.22, headY: 0.42 }),
+      poseFrame(100, { trunkX: 0.225, wristX: 0.2, leftFootX: 0.1, rightFootX: 0.15, headX: 0.25, headY: 0.42 }),
+      poseFrame(200, { trunkX: 0.27, wristX: 0.24, leftFootX: 0.14, rightFootX: 0.19, headX: 0.33, headY: 0.44 }),
+      poseFrame(400, { trunkX: 0.42, wristX: 0.38, leftFootX: 0.25, rightFootX: 0.3, headX: 0.5, headY: 0.54 }),
+    ];
+    const events = deriveStartEventCandidates({
+      frames,
+      calibration: null,
+      travelDirection: "left-to-right",
+      startStyle: "dive",
+      signalTimestampMs: 0,
+    });
+
+    expect(eventAt(events, "movement-onset").timestampMs).not.toBeNull();
+    expect(eventAt(events, "takeoff").timestampMs).not.toBeNull();
+    expect(eventAt(events, "head-entry")).toMatchObject({ timestampMs: null, status: "unavailable" });
+    expect(eventAt(events, "five-meter-head-crossing")).toMatchObject({ timestampMs: null, status: "unavailable" });
+    expect(events.every((event) => event.status !== "verified")).toBe(true);
+  });
 });

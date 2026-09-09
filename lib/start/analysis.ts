@@ -5,6 +5,7 @@ import {
 } from "../../types/analysis";
 import type {
   StartAnalysisQuality,
+  StartAnalysisMode,
   StartAnalysisResultV1,
   StartAthleteProfile,
   StartCalibrationV1,
@@ -50,6 +51,15 @@ const START_METRIC_DEFINITIONS: readonly {
   { id: "five-meter-time", label: "5m時間", unit: "ms" },
   { id: "zero-to-five-meter-average-speed", label: "0～5m平均速度", unit: "m/s" },
 ];
+
+const TIMING_ONLY_METRICS = new Set<StartMetricType>([
+  "movement-onset-time",
+  "block-contact-time",
+  "push-off-time",
+  "flight-time",
+  "entry-time",
+  "five-meter-time",
+]);
 
 function isReferenceMetric(
   metric: StartMetricType,
@@ -330,28 +340,36 @@ export function assessStartAnalysisQuality(
   video: StartVideoInfo,
   calibration: StartCalibrationV1 | null,
   events: readonly StartEvent[],
+  analysisMode: StartAnalysisMode = "precision",
 ): StartAnalysisQuality {
   const warnings: string[] = [];
   if (!Number.isInteger(athlete.age) || athlete.age < 13) warnings.push("13歳未満は本アプリの解析対象外です。");
-  if (video.effectiveFps === null || video.effectiveFps < 60) warnings.push("動画は最低60fpsが必要です。");
-  else if (video.effectiveFps < 120) warnings.push("120fpsを推奨します。イベント精度は未検証です。");
-  if (!video.fixedCamera) warnings.push("固定カメラ以外では速度・距離を確定しません。");
-  if (!video.sideOn) warnings.push("真横撮影以外では2D速度・角度を確定しません。");
+  if (analysisMode === "precision") {
+    if (video.effectiveFps === null || video.effectiveFps + 0.05 < 60) warnings.push("精密モードは最低60fpsが必要です。");
+    else if (video.effectiveFps < 120) warnings.push("120fpsを推奨します。イベント精度は未検証です。");
+    if (!video.fixedCamera) warnings.push("精密モードは固定カメラが必要です。");
+    if (!video.sideOn) warnings.push("精密モードは真横撮影が必要です。");
+    if (calibration === null) warnings.push("0m・5m・水面の校正が未完了です。");
+  } else {
+    if (video.effectiveFps === null || video.effectiveFps + 0.05 < 30) warnings.push("簡易タイムモードは最低30fpsが必要です。");
+    else if (video.effectiveFps < 60) warnings.push("30fpsでは1フレーム約33msです。時間は粗い参考値として扱ってください。");
+    if (!video.fixedCamera) warnings.push("カメラが動く映像では自動候補がずれるため、各イベントを手動で確認してください。");
+    if (!video.sideOn) warnings.push("斜め撮影では距離・速度・角度を測定せず、時間指標だけを表示します。");
+  }
   if (!video.singleSwimmer) warnings.push("1レーン・1選手の映像が必要です。");
-  if (calibration === null) warnings.push("0m・5m・水面の校正が未完了です。");
   if (events.some((event) => event.status === "candidate" || event.status === "needs-review")) warnings.push("自動候補はコーチ確認後にのみ数値化されます。");
   if (events.some((event) => event.status === "unavailable")) warnings.push("一部イベントは画面外または低信頼度です。");
   const sequenceErrors = validateStartEventSequence(events, athlete.startStyle);
   warnings.push(...sequenceErrors);
-  const unavailable =
+  const baseUnavailable =
     !Number.isInteger(athlete.age) ||
     athlete.age < 13 ||
     video.effectiveFps === null ||
-    video.effectiveFps < 60 ||
-    !video.fixedCamera ||
-    !video.sideOn ||
     !video.singleSwimmer ||
     sequenceErrors.length > 0;
+  const unavailable = baseUnavailable || (analysisMode === "precision"
+    ? video.effectiveFps! + 0.05 < 60 || !video.fixedCamera || !video.sideOn
+    : video.effectiveFps! + 0.05 < 30);
   return {
     status: unavailable
       ? "unavailable"
@@ -363,6 +381,9 @@ export function assessStartAnalysisQuality(
 }
 
 export interface BuildStartAnalysisOptions {
+  /** 省略時は従来どおり精密モードとして扱う。 */
+  readonly analysisMode?: StartAnalysisMode;
+  readonly travelDirection?: StartCalibrationV1["travelDirection"];
   readonly athlete: Omit<StartAthleteProfile, "startStyle"> & { readonly startStyle?: StartAthleteProfile["startStyle"] };
   readonly video: StartVideoInfo;
   readonly calibration: StartCalibrationV1 | null;
@@ -373,6 +394,8 @@ export interface BuildStartAnalysisOptions {
 }
 
 export function buildStartAnalysisResult(options: BuildStartAnalysisOptions): StartAnalysisResultV1 {
+  const analysisMode = options.analysisMode ?? "precision";
+  const travelDirection = options.travelDirection ?? options.calibration?.travelDirection ?? "left-to-right";
   const athlete: StartAthleteProfile = { ...options.athlete, startStyle: startStyleForStroke(options.athlete.strokeStyle) };
   const events = [...(options.events ?? [])].sort((first, second) => (first.timestampMs ?? Number.POSITIVE_INFINITY) - (second.timestampMs ?? Number.POSITIVE_INFINITY) || first.id.localeCompare(second.id));
   events.forEach(validateVerifiedStartEvent);
@@ -390,6 +413,7 @@ export function buildStartAnalysisResult(options: BuildStartAnalysisOptions): St
     options.video,
     options.calibration,
     events,
+    analysisMode,
   );
   const calculatedMetrics = calculateMetrics(
     events,
@@ -405,17 +429,30 @@ export function buildStartAnalysisResult(options: BuildStartAnalysisOptions): St
         status: "unavailable",
         note: "対象年齢または撮影品質の必須条件を満たしていません。",
       }))
-    : calculatedMetrics;
+    : analysisMode === "timing-only"
+      ? calculatedMetrics.map((item): StartMetric => TIMING_ONLY_METRICS.has(item.id)
+        ? item
+        : {
+            ...item,
+            value: null,
+            status: "unavailable",
+            note: "簡易タイムモードでは測定しません。",
+          })
+      : calculatedMetrics;
   return {
     schemaVersion: "1.0",
+    analysisMode,
+    travelDirection,
     athlete,
     video: options.video,
     calibration: options.calibration,
     events,
     metrics,
-    percentiles: metrics
-      .filter((item) => item.status === "verified" && isReferenceMetric(item.id))
-      .map((item) => percentileForStartMetric(item.id as "block-contact-time" | "entry-time" | "entry-distance" | "five-meter-time", item.unit === "ms" && item.value !== null ? item.value / 1000 : item.value, athlete, BORN_2026_REFERENCE_DATASET)),
+    percentiles: analysisMode === "timing-only"
+      ? []
+      : metrics
+        .filter((item) => item.status === "verified" && isReferenceMetric(item.id))
+        .map((item) => percentileForStartMetric(item.id as "block-contact-time" | "entry-time" | "entry-distance" | "five-meter-time", item.unit === "ms" && item.value !== null ? item.value / 1000 : item.value, athlete, BORN_2026_REFERENCE_DATASET)),
     quality,
     posePoints,
     poseFrames,
@@ -439,6 +476,8 @@ export function replaceStartEvent(
     ? result.events.map((event) => event.id === nextEvent.id ? nextEvent : event)
     : [...result.events, nextEvent];
   const rebuilt = buildStartAnalysisResult({
+    analysisMode: result.analysisMode,
+    travelDirection: result.travelDirection,
     athlete: result.athlete,
     video: result.video,
     calibration: result.calibration,

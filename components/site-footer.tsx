@@ -21,7 +21,7 @@ export function SiteFooter() {
               MotionAnalysys
             </Link>
             <p className="mt-3 text-sm leading-6 text-slate-400">
-              固定したプールサイドの側面動画から、競泳スタートの離台・入水・前方速度を端末内で参考計測する無料ベータです。
+              30fps以上・斜め撮影可の簡易タイムモードと、60fps以上・ほぼ真横の精密モードで、競泳スタートを端末内で参考計測する無料ベータです。
               動画や分析履歴をクラウドへ保存しません。
             </p>
           </div>

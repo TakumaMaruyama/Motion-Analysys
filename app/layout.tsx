@@ -9,7 +9,7 @@ import "../styles/globals.css";
 
 const DEFAULT_TITLE = "MotionAnalysys Start Beta | 競泳スタート分析";
 const DESCRIPTION =
-  "プールサイドから撮影した競泳スタート動画を端末内で処理し、離台・入水・2D前方速度を確認する未検証ベータ版です。";
+  "30fps以上・斜め撮影可の簡易タイムモードと、60fps以上・ほぼ真横の精密モードで競泳スタートを端末内分析する未検証ベータ版です。";
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();

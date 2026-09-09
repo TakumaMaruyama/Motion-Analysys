@@ -28,13 +28,14 @@ import {
   validateStartCalibration,
 } from "@/lib/start";
 import {
-  getModeFpsAssessment,
+  getStartFpsAssessment,
   inspectCompetitionVideo,
   type CompetitionVideoMetadata,
 } from "@/lib/video/competition-frame-source";
 import type { PoseFrame } from "@/types/analysis";
 import type {
   StartAnalysisResultV1,
+  StartAnalysisMode,
   StartCalibrationV1,
   StartEvent,
   StartEventSource,
@@ -71,7 +72,16 @@ type HistorySnapshot = {
 };
 
 const CALIBRATION_STORAGE_KEY = "motionanalysys.start-calibration.v1";
-const steps = ["動画と選手区分", "0m・5m・水面校正", "候補イベント確認", "局面別結果"] as const;
+const precisionSteps = ["動画と選手区分", "0m・5m・水面校正", "候補イベント確認", "局面別結果"] as const;
+const timingOnlySteps = ["動画と選手区分", "進行方向", "候補イベント確認", "時間結果"] as const;
+const timingOnlyMetricIds = new Set([
+  "movement-onset-time",
+  "block-contact-time",
+  "push-off-time",
+  "flight-time",
+  "entry-time",
+  "five-meter-time",
+]);
 
 const eventLabels: Record<StartEventType, string> = {
   signal: "号砲／スタート信号",
@@ -198,6 +208,7 @@ function toCoreEvents(events: EventMap): readonly StartEvent[] {
 
 export function StartAnalysisWorkspace() {
   const [activeStep, setActiveStep] = useState(0);
+  const [analysisMode, setAnalysisMode] = useState<StartAnalysisMode>("precision");
   const [stroke, setStroke] = useState<Stroke>("freestyle");
   const [age, setAge] = useState(13);
   const [sex, setSex] = useState<"male" | "female">("male");
@@ -243,16 +254,26 @@ export function StartAnalysisWorkspace() {
     () => safeCalibration(calibrationMarks, metadata, direction),
     [calibrationMarks, direction, metadata],
   );
+  const steps = analysisMode === "precision" ? precisionSteps : timingOnlySteps;
+  const resultCalibration = analysisMode === "precision" ? calibration : null;
   const captureAllowed = Boolean(
-    file && age >= 13 && fps !== null && fps >= 60 && fixedCamera === true && sideOn === true && singleSwimmer === true,
+    file && age >= 13 && fps !== null && singleSwimmer === true && (
+      analysisMode === "precision"
+        ? fps + 0.05 >= 60 && fixedCamera === true && sideOn === true
+        : fps + 0.05 >= 30
+    ),
   );
   const allRequiredEventsVerified = requiredEventTypes.every((type) => {
     const event = events[type];
-    return event.status === "verified" && event.timestampMs !== null && (type !== "head-entry" || manualHeadEntryPoint);
+    return event.status === "verified" && event.timestampMs !== null && (
+      type !== "head-entry" || analysisMode === "timing-only" || manualHeadEntryPoint
+    );
   });
 
   const calculatedResult: StartAnalysisResultV1 = useMemo(
     () => buildStartAnalysisResult({
+      analysisMode,
+      travelDirection: direction,
       athlete: { age, strokeStyle: stroke, researchSexCategory: sex },
       video: {
         name: metadata?.fileName ?? null,
@@ -265,14 +286,15 @@ export function StartAnalysisWorkspace() {
         sideOn: sideOn === true,
         singleSwimmer: singleSwimmer === true,
       },
-      calibration,
+      calibration: resultCalibration,
       events: toCoreEvents(events),
       poseFrames,
       externalFiveMeterTimeMs,
     }),
     [
       age,
-      calibration,
+      analysisMode,
+      direction,
       events,
       externalFiveMeterTimeMs,
       fixedCamera,
@@ -283,6 +305,7 @@ export function StartAnalysisWorkspace() {
       sideOn,
       singleSwimmer,
       stroke,
+      resultCalibration,
     ],
   );
   const coreResult: StartAnalysisResultV1 = useMemo(
@@ -356,6 +379,15 @@ export function StartAnalysisWorkspace() {
     setStroke(nextStroke);
   }, [clearAnalysisEvidence, stroke]);
 
+  const handleAnalysisModeChange = useCallback((nextMode: StartAnalysisMode) => {
+    if (nextMode === analysisMode) return;
+    clearAnalysisEvidence();
+    setCalibrationMarks({});
+    setCalibrationTarget(null);
+    setExternalFiveMeterTimeMs(null);
+    setAnalysisMode(nextMode);
+  }, [analysisMode, clearAnalysisEvidence]);
+
   const handleFile = useCallback(async (nextFile: File | null) => {
     resetForNewVideo();
     const requestId = fileRequestRef.current + 1;
@@ -426,7 +458,7 @@ export function StartAnalysisWorkspace() {
   const setEventAtCurrentFrame = useCallback((type: StartEventType) => {
     const timestampMs = (videoRef.current?.currentTime ?? 0) * 1000;
     const current = events[type];
-    if (type === "head-entry" && !manualHeadEntryPoint) {
+    if (type === "head-entry" && analysisMode === "precision" && !manualHeadEntryPoint) {
       setPointSelectionMode("head-entry");
       return;
     }
@@ -437,18 +469,18 @@ export function StartAnalysisWorkspace() {
       source: "manual",
       confidence: 1,
     }, { resetHeadPoint: type === "head-entry" && current.timestampMs !== timestampMs });
-  }, [events, frameMs, manualHeadEntryPoint, updateEvent]);
+  }, [analysisMode, events, frameMs, manualHeadEntryPoint, updateEvent]);
 
   const verifyEvent = useCallback((type: StartEventType) => {
     const current = events[type];
-    if (current.timestampMs === null || (type === "head-entry" && !manualHeadEntryPoint)) return;
+    if (current.timestampMs === null || (type === "head-entry" && analysisMode === "precision" && !manualHeadEntryPoint)) return;
     updateEvent(type, {
       status: "verified",
       source: "manual",
       confidence: 1,
       frameIndex: current.frameIndex ?? makeFrameIndex(current.timestampMs, frameMs),
     });
-  }, [events, frameMs, manualHeadEntryPoint, updateEvent]);
+  }, [analysisMode, events, frameMs, manualHeadEntryPoint, updateEvent]);
 
   const moveEventByFrame = useCallback((type: StartEventType, delta: number) => {
     const baseTimestamp = events[type].timestampMs ?? (videoRef.current?.currentTime ?? 0) * 1000;
@@ -504,7 +536,7 @@ export function StartAnalysisWorkspace() {
   }, [events, future, manualHeadEntryPoint]);
 
   const runCandidates = useCallback(async () => {
-    if (!file || !metadata || !calibration) return;
+    if (!file || !metadata || (analysisMode === "precision" && !calibration)) return;
     analysisAbortRef.current?.abort();
     const controller = new AbortController();
     analysisAbortRef.current = controller;
@@ -513,7 +545,9 @@ export function StartAnalysisWorkspace() {
     try {
       const result = await runStartCandidateAnalysis({
         sourceFile: file,
-        calibration,
+        analysisMode,
+        calibration: analysisMode === "precision" ? calibration : null,
+        travelDirection: direction,
         startStyle: stroke === "backstroke" ? "backstroke" : "dive",
         startMs: 0,
         endMs: Math.min(metadata.durationMs, 30000),
@@ -540,7 +574,7 @@ export function StartAnalysisWorkspace() {
         setAnalysisProgress(null);
       }
     }
-  }, [calibration, file, metadata, stroke]);
+  }, [analysisMode, calibration, direction, file, metadata, stroke]);
 
   const cancelCandidateAnalysis = useCallback(() => {
     analysisAbortRef.current?.abort();
@@ -584,13 +618,16 @@ export function StartAnalysisWorkspace() {
     context.fillText("MOTIONANALYSYS START · 未検証ベータ", 64, 70);
     context.fillStyle = "#ffffff";
     context.font = "700 46px sans-serif";
-    context.fillText("競泳スタート分析", 64, 130);
+    context.fillText(analysisMode === "precision" ? "競泳スタート精密分析" : "競泳スタート簡易タイム", 64, 130);
     context.font = "24px sans-serif";
     context.fillStyle = "#dbeafe";
     context.fillText(`${stroke} · ${age}歳 · ${sex === "male" ? "男子基準" : "女子基準"}`, 64, 174);
     context.fillText(`品質: ${coreResult.quality.status}`, 64, 214);
     context.font = "700 22px sans-serif";
-    coreResult.metrics.forEach((metric, index) => {
+    const displayedMetrics = analysisMode === "precision"
+      ? coreResult.metrics
+      : coreResult.metrics.filter((metric) => timingOnlyMetricIds.has(metric.id));
+    displayedMetrics.forEach((metric, index) => {
       const column = index % 2;
       const row = Math.floor(index / 2);
       const x = 64 + column * 650;
@@ -602,11 +639,17 @@ export function StartAnalysisWorkspace() {
     });
     context.fillStyle = "#fbbf24";
     context.font = "18px sans-serif";
-    context.fillText("2D参考計測。水中・3D・力・パワー・公式反応時間は測定しません。", 64, 790);
+    context.fillText(
+      analysisMode === "precision"
+        ? "2D参考計測。水中・3D・力・パワー・公式反応時間は測定しません。"
+        : "時間のみの参考計測。距離・速度・角度・百分位は測定しません。",
+      64,
+      790,
+    );
     canvas.toBlob((blob) => {
       if (blob) downloadBlob(blob, "start-analysis.png");
     }, "image/png");
-  }, [age, coreResult, sex, stroke]);
+  }, [age, analysisMode, coreResult, sex, stroke]);
 
   return (
     <section
@@ -620,7 +663,7 @@ export function StartAnalysisWorkspace() {
           <div>
             <h2 className="text-2xl font-black">競泳スタートを局面別に確認</h2>
             <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-              固定・真横の水上動画から、離台・入水・推定前方速度を端末内で参考計測します。
+              30fpsから使える簡易タイムと、60fps以上・ほぼ真横で測る精密分析を選べます。
             </p>
           </div>
           <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-950">未検証ベータ</span>
@@ -647,10 +690,12 @@ export function StartAnalysisWorkspace() {
         {activeStep === 0 ? (
           <VideoAndProfileStep
             age={age}
+            analysisMode={analysisMode}
             fixedCamera={fixedCamera}
             fps={fps}
             metadata={metadata}
             onFile={handleFile}
+            onModeChange={handleAnalysisModeChange}
             onNext={() => setActiveStep(1)}
             setAge={setAge}
             setFixedCamera={setFixedCamera}
@@ -667,6 +712,7 @@ export function StartAnalysisWorkspace() {
 
         {activeStep === 1 ? (
           <CalibrationStep
+            analysisMode={analysisMode}
             calibration={calibration}
             calibrationMarks={calibrationMarks}
             direction={direction}
@@ -685,9 +731,10 @@ export function StartAnalysisWorkspace() {
 
         {activeStep === 2 ? (
           <EventReviewStep
+            analysisMode={analysisMode}
             analysisProgress={analysisProgress}
-            calibrationReady={calibration !== null}
-            canAnalyze={captureAllowed && calibration !== null && metadata !== null}
+            calibrationReady={analysisMode === "timing-only" || calibration !== null}
+            canAnalyze={captureAllowed && (analysisMode === "timing-only" || calibration !== null) && metadata !== null}
             events={events}
             frameMs={frameMs}
             manualHeadEntryPoint={manualHeadEntryPoint}
@@ -714,6 +761,7 @@ export function StartAnalysisWorkspace() {
 
         {activeStep === 3 ? (
           <ResultsStep
+            analysisMode={analysisMode}
             allRequiredEventsVerified={allRequiredEventsVerified}
             externalFiveMeterTimeMs={externalFiveMeterTimeMs}
             onBack={() => setActiveStep(2)}
@@ -722,7 +770,7 @@ export function StartAnalysisWorkspace() {
             onJson={() => downloadText(exportStartAnalysisJson(coreResult), "start-analysis.json", "application/json")}
             onPng={exportPng}
             result={coreResult}
-            showBands={age >= 13 && age <= 32}
+            showBands={analysisMode === "precision" && age >= 13 && age <= 32}
           />
         ) : null}
       </div>
@@ -732,10 +780,12 @@ export function StartAnalysisWorkspace() {
 
 function VideoAndProfileStep({
   age,
+  analysisMode,
   fixedCamera,
   fps,
   metadata,
   onFile,
+  onModeChange,
   onNext,
   setAge,
   setFixedCamera,
@@ -749,10 +799,12 @@ function VideoAndProfileStep({
   stroke,
 }: {
   readonly age: number;
+  readonly analysisMode: StartAnalysisMode;
   readonly fixedCamera: boolean | null;
   readonly fps: number | null;
   readonly metadata: CompetitionVideoMetadata | null;
   readonly onFile: (file: File | null) => void;
+  readonly onModeChange: (mode: StartAnalysisMode) => void;
   readonly onNext: () => void;
   readonly setAge: (value: number) => void;
   readonly setFixedCamera: (value: boolean | null) => void;
@@ -765,13 +817,35 @@ function VideoAndProfileStep({
   readonly singleSwimmer: boolean | null;
   readonly stroke: Stroke;
 }) {
-  const assessment = metadata ? getModeFpsAssessment(metadata, "start") : null;
-  const canContinue = Boolean(metadata && age >= 13 && fps !== null && fps >= 60 && fixedCamera === true && sideOn === true && singleSwimmer === true);
+  const assessment = metadata ? getStartFpsAssessment(metadata, analysisMode) : null;
+  const canContinue = Boolean(
+    metadata && assessment?.allowed && age >= 13 && singleSwimmer === true && (
+      analysisMode === "timing-only" || (fixedCamera === true && sideOn === true)
+    ),
+  );
 
   return (
     <div>
       <h3 className="font-bold">1. 動画と選手区分</h3>
-      <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">対象は13歳以上です。研究比較区分は結果ファイルにだけ含め、端末へ保存しません。</p>
+      <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">先に測定モードを選びます。対象は13歳以上です。</p>
+      <fieldset className="mt-4 grid gap-3 sm:grid-cols-2">
+        <legend className="sr-only">測定モード</legend>
+        <label className={`cursor-pointer rounded-2xl border-2 p-4 transition ${analysisMode === "precision" ? "border-indigo-600 bg-indigo-50 dark:bg-indigo-950/30" : "border-slate-200 dark:border-slate-700"}`}>
+          <span className="flex items-center gap-2">
+            <input type="radio" name="start-analysis-mode" value="precision" checked={analysisMode === "precision"} onChange={() => onModeChange("precision")} />
+            <span className="font-black">精密モード</span>
+            <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-800">推奨</span>
+          </span>
+          <span className="mt-2 block text-sm text-slate-600 dark:text-slate-300">60fps以上・固定・ほぼ真横。離台／入水の距離・速度・角度まで測定します。</span>
+        </label>
+        <label className={`cursor-pointer rounded-2xl border-2 p-4 transition ${analysisMode === "timing-only" ? "border-sky-600 bg-sky-50 dark:bg-sky-950/30" : "border-slate-200 dark:border-slate-700"}`}>
+          <span className="flex items-center gap-2">
+            <input type="radio" name="start-analysis-mode" value="timing-only" checked={analysisMode === "timing-only"} onChange={() => onModeChange("timing-only")} />
+            <span className="font-black">簡易タイムモード</span>
+          </span>
+          <span className="mt-2 block text-sm text-slate-600 dark:text-slate-300">30fps以上・斜め撮影可。時間だけを参考計測し、距離・速度・角度・百分位は表示しません。</span>
+        </label>
+      </fieldset>
       <div className="mt-4 grid gap-4 sm:grid-cols-3">
         <label className="grid gap-2 text-sm font-bold">
           種目
@@ -787,7 +861,7 @@ function VideoAndProfileStep({
           <input type="number" min={0} value={age} onChange={(event) => setAge(Number(event.target.value))} className="h-11 rounded-xl border px-3" />
         </label>
         <label className="grid gap-2 text-sm font-bold">
-          研究比較区分
+          研究比較区分{analysisMode === "timing-only" ? "（記録のみ）" : ""}
           <select value={sex} onChange={(event) => setSex(event.target.value as "male" | "female")} className="h-11 rounded-xl border px-3">
             <option value="male">男子基準</option>
             <option value="female">女子基準</option>
@@ -810,24 +884,27 @@ function VideoAndProfileStep({
       {metadata ? (
         <div className="mt-3 rounded-xl bg-slate-50 p-3 text-sm dark:bg-slate-950/30">
           <p>{metadata.fileName} · {fps?.toFixed(1) ?? "不明"} fps</p>
-          {assessment?.allowed ? null : <p className="mt-1 text-rose-700">最低60fpsの動画が必要です。</p>}
-          {fps !== null && fps >= 60 && fps < 120 ? <p className="mt-1 text-amber-800">120fpsを推奨します。60fpsではフレーム精査の不確かさが大きくなります。</p> : null}
+          {!assessment?.allowed ? <p className="mt-1 text-rose-700">{assessment?.message}</p> : null}
+          {assessment?.allowed && assessment.message ? <p className="mt-1 text-amber-800">{assessment.message}</p> : null}
         </div>
       ) : null}
-      {age > 32 ? <p className="mt-3 text-sm text-amber-800">33歳以上は解析できますが、Born 2026の参考帯は表示しません。</p> : null}
+      {analysisMode === "precision" && age > 32 ? <p className="mt-3 text-sm text-amber-800">33歳以上は解析できますが、Born 2026の参考帯は表示しません。</p> : null}
 
       <div className="mt-4 grid gap-2 text-sm">
-        <label><input type="checkbox" checked={fixedCamera === true} onChange={(event) => setFixedCamera(event.target.checked)} /> 固定カメラを確認</label>
-        <label><input type="checkbox" checked={sideOn === true} onChange={(event) => setSideOn(event.target.checked)} /> 真横撮影を確認</label>
+        <label><input type="checkbox" checked={fixedCamera === true} onChange={(event) => setFixedCamera(event.target.checked)} /> 固定カメラを確認{analysisMode === "timing-only" ? "（推奨）" : ""}</label>
+        <label><input type="checkbox" checked={sideOn === true} onChange={(event) => setSideOn(event.target.checked)} /> 真横撮影を確認{analysisMode === "timing-only" ? "（任意）" : ""}</label>
         <label><input type="checkbox" checked={singleSwimmer === true} onChange={(event) => setSingleSwimmer(event.target.checked)} /> 1レーン・1選手を確認</label>
       </div>
-      {fixedCamera !== true || sideOn !== true || singleSwimmer !== true ? <p className="mt-3 text-sm text-rose-700">固定・真横・1選手を確認するまで、距離・速度を含む解析へ進めません。</p> : null}
-      <div className="mt-6 flex justify-end"><Button onClick={onNext} disabled={!canContinue}>次へ：校正</Button></div>
+      {analysisMode === "precision" && (fixedCamera !== true || sideOn !== true || singleSwimmer !== true) ? <p className="mt-3 text-sm text-rose-700">固定・真横・1選手を確認するまで、精密解析へ進めません。</p> : null}
+      {analysisMode === "timing-only" && singleSwimmer !== true ? <p className="mt-3 text-sm text-rose-700">1レーン・1選手を確認してから進んでください。</p> : null}
+      <p className="mt-3 text-xs text-slate-500">年齢・研究比較区分は結果ファイルにだけ含め、端末へ保存しません。</p>
+      <div className="mt-6 flex justify-end"><Button onClick={onNext} disabled={!canContinue}>{analysisMode === "precision" ? "次へ：校正" : "次へ：進行方向"}</Button></div>
     </div>
   );
 }
 
 function CalibrationStep({
+  analysisMode,
   calibration,
   calibrationMarks,
   direction,
@@ -842,6 +919,7 @@ function CalibrationStep({
   videoRef,
   videoUrl,
 }: {
+  readonly analysisMode: StartAnalysisMode;
   readonly calibration: StartCalibrationV1 | null;
   readonly calibrationMarks: CalibrationMarks;
   readonly direction: Direction;
@@ -862,6 +940,32 @@ function CalibrationStep({
     ["water1", "水面点1", calibrationMarks.waterFirst],
     ["water2", "水面点2", calibrationMarks.waterSecond],
   ] as const;
+
+  if (analysisMode === "timing-only") {
+    return (
+      <div>
+        <h3 className="font-bold">2. 進行方向</h3>
+        <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+          泳者が進む方向を選びます。簡易タイムでは距離校正を行わず、頭頂入水と5m通過は映像を見て手動で確定します。
+        </p>
+        {videoUrl ? <video ref={videoRef} src={videoUrl} controls className="mt-4 max-h-[28rem] w-full rounded-xl bg-black" /> : null}
+        <label className="mt-4 grid max-w-xs gap-2 text-sm font-bold">
+          進行方向
+          <select aria-label="進行方向" value={direction} onChange={(event) => setDirection(event.target.value as Direction)} className="h-11 rounded-md border px-3 text-sm">
+            <option value="left-to-right">左から右</option>
+            <option value="right-to-left">右から左</option>
+          </select>
+        </label>
+        <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-950">
+          30fpsでは1フレーム約33msです。自動候補の位置を必ず1フレームずつ確認してください。
+        </p>
+        <div className="mt-6 flex justify-between">
+          <Button variant="outline" onClick={onBack}>戻る</Button>
+          <Button onClick={onNext}>次へ：候補イベント</Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -896,6 +1000,7 @@ function CalibrationStep({
 }
 
 function EventReviewStep({
+  analysisMode,
   analysisProgress,
   calibrationReady,
   canAnalyze,
@@ -921,6 +1026,7 @@ function EventReviewStep({
   videoUrl,
   visibleEventTypes,
 }: {
+  readonly analysisMode: StartAnalysisMode;
   readonly analysisProgress: { percentage: number; message: string } | null;
   readonly calibrationReady: boolean;
   readonly canAnalyze: boolean;
@@ -962,13 +1068,14 @@ function EventReviewStep({
         )}
       </div>
       {analysisProgress ? <p className="mt-3 rounded-xl bg-indigo-50 p-3 text-sm text-indigo-950">{analysisProgress.percentage.toFixed(0)}% · {analysisProgress.message}</p> : null}
+      {analysisMode === "timing-only" ? <p className="mt-3 rounded-xl bg-sky-50 p-3 text-sm text-sky-950">簡易タイムでは頭頂入水と5m通過の自動候補を出しません。該当フレームで「現在フレーム」を押して確定してください。</p> : null}
       {videoUrl ? <video ref={videoRef} src={videoUrl} controls onClick={onClickVideo} className="mt-4 max-h-[28rem] w-full rounded-xl bg-black" /> : null}
-      {pointSelectionMode === "head-entry" ? <p className="mt-3 rounded-xl bg-indigo-50 p-3 text-sm text-indigo-950">動画上の頭頂入水位置を1回クリックしてください。その点と現在フレームを候補にします。</p> : null}
+      {analysisMode === "precision" && pointSelectionMode === "head-entry" ? <p className="mt-3 rounded-xl bg-indigo-50 p-3 text-sm text-indigo-950">動画上の頭頂入水位置を1回クリックしてください。その点と現在フレームを候補にします。</p> : null}
 
       <div className="mt-4 space-y-3">
         {visibleEventTypes.map((type) => {
           const event = events[type];
-          const requiresPoint = type === "head-entry";
+          const requiresPoint = analysisMode === "precision" && type === "head-entry";
           const canVerify = event.timestampMs !== null && (!requiresPoint || manualHeadEntryPoint);
           return (
             <div key={type} className="rounded-xl border p-3">
@@ -1017,7 +1124,7 @@ function EventReviewStep({
         <Button size="sm" variant="outline" onClick={onUndo} disabled={!undoEnabled}><Undo2 className="mr-1 h-4 w-4" />Undo</Button>
         <Button size="sm" variant="outline" onClick={onRedo} disabled={!redoEnabled}><Redo2 className="mr-1 h-4 w-4" />Redo</Button>
       </div>
-      <p className="mt-3 flex gap-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-950"><AlertTriangle className="h-4 w-4 shrink-0" />候補・要確認イベントは、verifiedになるまで数値と百分位の依存条件を満たしません。画面外・飛沫・遮蔽は未取得のままにしてください。</p>
+      <p className="mt-3 flex gap-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-950"><AlertTriangle className="h-4 w-4 shrink-0" />候補・要確認イベントは、確認済みになるまで数値の依存条件を満たしません。画面外・飛沫・遮蔽は未取得のままにしてください。</p>
       <div className="mt-6 flex justify-between">
         <Button variant="outline" onClick={onBack}>戻る</Button>
         <Button onClick={onNext}>結果を見る</Button>
@@ -1027,6 +1134,7 @@ function EventReviewStep({
 }
 
 function ResultsStep({
+  analysisMode,
   allRequiredEventsVerified,
   externalFiveMeterTimeMs,
   onBack,
@@ -1037,6 +1145,7 @@ function ResultsStep({
   result,
   showBands,
 }: {
+  readonly analysisMode: StartAnalysisMode;
   readonly allRequiredEventsVerified: boolean;
   readonly externalFiveMeterTimeMs: number | null;
   readonly onBack: () => void;
@@ -1057,14 +1166,18 @@ function ResultsStep({
     "p90-p97": "P90〜P97",
     "above-p97": "P97超",
   };
+  const displayedMetrics = analysisMode === "precision"
+    ? result.metrics
+    : result.metrics.filter((metric) => timingOnlyMetricIds.has(metric.id));
 
   return (
     <div>
-      <h3 className="font-bold">4. 局面別結果</h3>
+      <h3 className="font-bold">4. {analysisMode === "precision" ? "局面別結果" : "簡易タイム結果"}</h3>
+      {analysisMode === "timing-only" ? <p className="mt-3 rounded-xl bg-sky-50 p-3 text-sm text-sky-950">30fps以上の時間専用参考計測です。距離・速度・角度・百分位は表示しません。</p> : null}
       {!allRequiredEventsVerified ? <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-950">必要イベントをコーチがすべて確認するまで、値は確定しません。以下の「—」は欠測または未確定です。</p> : null}
       {result.quality.warnings.length > 0 ? <div className="mt-3 rounded-xl bg-slate-50 p-3 text-sm text-slate-700 dark:bg-slate-950/30 dark:text-slate-200"><p className="font-bold">品質・制約</p><ul className="mt-1 list-disc pl-5">{result.quality.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div> : null}
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        {result.metrics.map((metric) => (
+        {displayedMetrics.map((metric) => (
           <div key={metric.id} className="rounded-xl border p-3">
             <p className="text-xs font-bold text-slate-500">{metric.label}</p>
             <p className="mt-1 text-xl font-black">{metric.value === null ? "—" : `${metric.value.toFixed(2)} ${metric.unit}`}</p>
@@ -1072,13 +1185,13 @@ function ResultsStep({
           </div>
         ))}
       </div>
-      <div className="mt-5 rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-sm text-indigo-950">
+      {analysisMode === "precision" ? <div className="mt-5 rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-sm text-indigo-950">
         <p className="font-bold">Born et al. 2026 エリート参考帯</p>
         {!showBands ? <p className="mt-1">33歳以上は研究比較年齢範囲外のため表示しません。</p> : null}
         {showBands && result.percentiles.length === 0 ? <p className="mt-1">ブロック／壁接触時間・入水時間・入水距離・5m時間は、条件を満たした確認済み値だけに表示します。</p> : null}
         {showBands ? result.percentiles.map((percentile) => <p key={percentile.metric} className="mt-1">{percentile.metric}：{percentile.band ? bands[percentile.band] : percentile.note ?? "比較対象外"}</p>) : null}
         <p className="mt-2 text-xs">時間は小さいほど、距離は大きいほど高パフォーマンス側として表示形式を変換しています。合否・総合点・才能判定ではありません。</p>
-      </div>
+      </div> : null}
       <label className="mt-5 grid max-w-sm gap-2 rounded-xl border p-3 text-sm font-bold">
         外部ストップウォッチ5m（記録のみ・参考帯には不使用）
         <input
@@ -1104,7 +1217,11 @@ function ResultsStep({
         <Button variant="outline" onClick={onCsv}><FileSpreadsheet className="mr-1 h-4 w-4" />CSV</Button>
         <Button variant="outline" onClick={onPng}><ImageDown className="mr-1 h-4 w-4" />PNG</Button>
       </div>
-      <p className="mt-4 text-xs text-slate-500">水中速度、最大深度、キック、ブレイクアウト、3D速度、力、パワー、仕事量、公式反応時間、失格判定は扱いません。</p>
+      <p className="mt-4 text-xs text-slate-500">
+        {analysisMode === "precision"
+          ? "水中速度、最大深度、キック、ブレイクアウト、3D速度、力、パワー、仕事量、公式反応時間、失格判定は扱いません。"
+          : "簡易タイムでは距離、速度、角度、百分位、水中局面、公式反応時間、失格判定を扱いません。"}
+      </p>
       <Button className="mt-5" variant="outline" onClick={onBack}>イベントを修正</Button>
     </div>
   );

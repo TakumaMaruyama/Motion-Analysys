@@ -6,6 +6,7 @@ import type {
 } from "mediabunny";
 
 import type { AnalysisMode } from "@/types/competition";
+import type { StartAnalysisMode } from "@/types/start";
 
 const SUPPORTED_EXTENSIONS = new Set(["mp4", "mov", "webm"]);
 const SUPPORTED_MIME_TYPES = new Set([
@@ -18,6 +19,7 @@ export const MAX_ANALYSIS_DURATION_MS = 30_000;
 export const MIN_SWIM_FPS = 30;
 export const MIN_TURN_FPS = 60;
 export const MIN_START_FPS = 60;
+export const MIN_START_TIMING_FPS = 30;
 export const RECOMMENDED_START_FPS = 120;
 
 export type CompetitionVideoIssue =
@@ -78,6 +80,8 @@ export interface DecodeCompetitionFramesOptions extends AnalysisWindow {
   /** nullなら元fps。数値ならpresentation timestampをその頻度で間引く。 */
   readonly targetFps: number | null;
   readonly mode?: AnalysisMode;
+  /** Start内の精密／簡易タイム判定。modeがstartの時だけ使用する。 */
+  readonly startAnalysisMode?: StartAnalysisMode;
   readonly signal?: AbortSignal;
   readonly onFrame: (
     frame: DecodedCompetitionFrame,
@@ -275,6 +279,38 @@ export function getModeFpsAssessment(
     };
   }
 
+  return { allowed: true, message: null };
+}
+
+export function getStartFpsAssessment(
+  metadata: Pick<CompetitionVideoMetadata, "effectiveFps" | "canDecode">,
+  analysisMode: StartAnalysisMode,
+): { readonly allowed: boolean; readonly message: string | null } {
+  if (analysisMode === "precision") return getModeFpsAssessment(metadata, "start");
+  if (!metadata.canDecode) {
+    return {
+      allowed: false,
+      message: "このブラウザでは動画コーデックを解析できません。MP4（H.264）またはWebMで撮り直してください。",
+    };
+  }
+  if (metadata.effectiveFps === null) {
+    return {
+      allowed: false,
+      message: "動画のfpsを確認できないため、簡易タイム解析は実行できません。",
+    };
+  }
+  if (metadata.effectiveFps + 0.05 < MIN_START_TIMING_FPS) {
+    return {
+      allowed: false,
+      message: `簡易タイムモードには${MIN_START_TIMING_FPS}fps以上の動画が必要です。`,
+    };
+  }
+  if (metadata.effectiveFps < MIN_START_FPS) {
+    return {
+      allowed: true,
+      message: "30fpsでは1フレーム約33msです。時間は粗い参考値として扱ってください。",
+    };
+  }
   return { allowed: true, message: null };
 }
 
@@ -570,7 +606,9 @@ export async function decodeCompetitionFrames(
     file,
     options.signal,
   );
-  const assessment = getModeFpsAssessment(metadata, options.mode ?? "swim");
+  const assessment = options.mode === "start" && options.startAnalysisMode
+    ? getStartFpsAssessment(metadata, options.startAnalysisMode)
+    : getModeFpsAssessment(metadata, options.mode ?? "swim");
   if (!assessment.allowed) {
     throw new CompetitionVideoError(
       assessment.message ?? "この動画は精密解析できません。",

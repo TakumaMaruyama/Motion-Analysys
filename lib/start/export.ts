@@ -68,6 +68,8 @@ export function exportStartAnalysisCsv(result: StartAnalysisResultV1): string {
   ]);
 
   add("analysis", "schema-version", result.schemaVersion);
+  add("analysis", "analysis-mode", result.analysisMode);
+  add("analysis", "travel-direction", result.travelDirection);
   add("athlete", "stroke-style", result.athlete.strokeStyle);
   add("athlete", "start-style", result.athlete.startStyle);
   add("athlete", "age", result.athlete.age, "years");

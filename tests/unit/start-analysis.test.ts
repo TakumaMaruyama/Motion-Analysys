@@ -66,6 +66,7 @@ describe("start analysis", () => {
       ],
     });
     expect(result.metrics.find((item) => item.id === "block-contact-time")).toMatchObject({ value: null, status: "unavailable" });
+    expect(result.analysisMode).toBe("precision");
   });
 
   it("prefers a verified event over an earlier same-type candidate for metric dependencies", () => {
@@ -140,6 +141,65 @@ describe("start analysis", () => {
     expect(withoutSignal.metrics.find((item) => item.id === "entry-time")).toMatchObject({ value: null, status: "unavailable" });
   });
 
+  it("allows 30fps oblique footage in timing-only mode and suppresses every spatial result", () => {
+    const events = [
+      event("signal", 0),
+      event("movement-onset", 133),
+      event("takeoff", 700),
+      event("head-entry", 1_033, { x: 0.36, y: 0.5 }),
+      event("five-meter-head-crossing", 2_300),
+    ];
+    const result = buildStartAnalysisResult({
+      analysisMode: "timing-only",
+      athlete: { strokeStyle: "freestyle", age: 16, researchSexCategory: "male" },
+      video: { ...VIDEO, effectiveFps: 30, fixedCamera: false, sideOn: false },
+      calibration: CALIBRATION,
+      events,
+      poseFrames: [frame(700, 0.2), frame(750, 0.25), frame(800, 0.3), frame(1_000, 0.35), frame(1_033, 0.36)],
+    });
+
+    expect(result.analysisMode).toBe("timing-only");
+    expect(result.metrics.find((item) => item.id === "movement-onset-time")).toMatchObject({ value: 133, status: "verified" });
+    expect(result.metrics.find((item) => item.id === "block-contact-time")).toMatchObject({ value: 700, status: "verified" });
+    expect(result.metrics.find((item) => item.id === "flight-time")).toMatchObject({ value: 333, status: "verified" });
+    expect(result.metrics.find((item) => item.id === "five-meter-time")).toMatchObject({ value: 2300, status: "verified" });
+    for (const metricId of ["entry-distance", "takeoff-forward-velocity", "entry-forward-velocity", "entry-torso-angle", "zero-to-five-meter-average-speed"] as const) {
+      expect(result.metrics.find((item) => item.id === metricId)).toMatchObject({
+        value: null,
+        status: "unavailable",
+        note: "簡易タイムモードでは測定しません。",
+      });
+    }
+    expect(result.percentiles).toEqual([]);
+    expect(result.quality.warnings.join(" ")).toContain("1フレーム約33ms");
+    expect(result.quality.warnings.join(" ")).toContain("斜め撮影");
+  });
+
+  it("rejects footage below 30fps even in timing-only mode", () => {
+    const result = buildStartAnalysisResult({
+      analysisMode: "timing-only",
+      athlete: { strokeStyle: "freestyle", age: 16, researchSexCategory: "male" },
+      video: { ...VIDEO, effectiveFps: 29.9, fixedCamera: false, sideOn: false },
+      calibration: null,
+      events: [event("signal", 0), event("takeoff", 700)],
+    });
+    expect(result.quality.status).toBe("unavailable");
+    expect(result.quality.warnings.join(" ")).toContain("最低30fps");
+    expect(result.metrics.every((metric) => metric.value === null)).toBe(true);
+  });
+
+  it("treats broadcast-rate 29.97fps as 30fps timing footage", () => {
+    const result = buildStartAnalysisResult({
+      analysisMode: "timing-only",
+      athlete: { strokeStyle: "freestyle", age: 16, researchSexCategory: "male" },
+      video: { ...VIDEO, effectiveFps: 29.97, fixedCamera: false, sideOn: false },
+      calibration: null,
+      events: [event("signal", 0), event("takeoff", 700)],
+    });
+    expect(result.quality.status).toBe("needs-review");
+    expect(result.metrics.find((item) => item.id === "block-contact-time")).toMatchObject({ value: 700, status: "verified" });
+  });
+
   it("uses a robust median-of-slopes velocity estimate and returns null when coverage is insufficient", () => {
     const points = [
       { x: 0.2, y: 0.5, timestampMs: 0, frameIndex: 0, visibility: 1 },
@@ -197,6 +257,7 @@ describe("start analysis", () => {
     const revised = replaceStartEvent(initial, event("takeoff", 800));
     expect(revised.revisionHistory).toHaveLength(1);
     expect(revised.revisionHistory[0].next.status).toBe("verified");
+    expect(revised.analysisMode).toBe("precision");
   });
 
   it("marks age and capture constraints as unavailable instead of fabricating results", () => {

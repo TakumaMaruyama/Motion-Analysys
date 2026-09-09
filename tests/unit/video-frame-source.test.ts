@@ -5,6 +5,7 @@ import {
   buildSampleTimestampsMs,
   findNearestFrameIndex,
   getModeFpsAssessment,
+  getStartFpsAssessment,
   isSupportedCompetitionVideoFile,
 } from "@/lib/video/competition-frame-source";
 
@@ -90,5 +91,18 @@ describe("mode fps requirements", () => {
       getModeFpsAssessment({ canDecode: false, effectiveFps: 120 }, "swim")
         .allowed,
     ).toBe(false);
+  });
+
+  it("allows 30fps only for Start timing-only mode", () => {
+    expect(getStartFpsAssessment({ canDecode: true, effectiveFps: 29.9 }, "timing-only").allowed).toBe(false);
+    expect(getStartFpsAssessment({ canDecode: true, effectiveFps: 30 }, "timing-only")).toMatchObject({
+      allowed: true,
+      message: expect.stringContaining("約33ms"),
+    });
+    expect(getStartFpsAssessment({ canDecode: true, effectiveFps: 30 }, "precision").allowed).toBe(false);
+    expect(getStartFpsAssessment({ canDecode: true, effectiveFps: 60 }, "precision").allowed).toBe(true);
+    expect(getStartFpsAssessment({ canDecode: true, effectiveFps: 29.97 }, "timing-only").allowed).toBe(true);
+    expect(getStartFpsAssessment({ canDecode: true, effectiveFps: 120 }, "timing-only").allowed).toBe(true);
+    expect(getStartFpsAssessment({ canDecode: true, effectiveFps: 120 }, "precision").allowed).toBe(true);
   });
 });

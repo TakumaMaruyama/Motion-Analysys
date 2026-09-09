@@ -2,13 +2,14 @@ import { WorkerPoseEstimator } from "@/lib/pose/worker-estimator";
 import { deriveStartEventCandidates } from "@/lib/start/candidates";
 import {
   decodeCompetitionFrames,
-  getModeFpsAssessment,
+  getStartFpsAssessment,
   inspectCompetitionVideo,
   type CompetitionVideoMetadata,
 } from "@/lib/video/competition-frame-source";
 import type { PoseFrame } from "@/types/analysis";
 import type {
   StartCalibrationV1,
+  StartAnalysisMode,
   StartEvent,
   StartStyle,
 } from "@/types/start";
@@ -16,7 +17,9 @@ import { validateStartCalibration } from "@/lib/start/calibration";
 
 export interface StartCandidateAnalysisRequest {
   readonly sourceFile: File;
-  readonly calibration: StartCalibrationV1;
+  readonly analysisMode: StartAnalysisMode;
+  readonly calibration: StartCalibrationV1 | null;
+  readonly travelDirection: StartCalibrationV1["travelDirection"];
   readonly startStyle: StartStyle;
   /** スタートを含む切り出し範囲。最大30秒、元fpsで精査する。 */
   readonly startMs: number;
@@ -119,16 +122,21 @@ export async function runStartCandidateAnalysis(
 ): Promise<StartCandidateAnalysisResult> {
   const { signal, onProgress } = callbacks;
   throwIfAborted(signal);
-  validateStartCalibration(request.calibration);
+  if (request.analysisMode === "precision") {
+    if (request.calibration === null) throw new Error("精密モードには0m・5m・水面の校正が必要です。");
+    validateStartCalibration(request.calibration);
+  } else if (request.calibration !== null) {
+    validateStartCalibration(request.calibration);
+  }
   if (!Number.isFinite(request.startMs) || !Number.isFinite(request.endMs) || request.endMs <= request.startMs) {
     throw new RangeError("スタート解析範囲は正の長さで指定してください。");
   }
 
   onProgress?.(2, "動画情報を確認しています");
   const metadata = await inspectCompetitionVideo(request.sourceFile, signal);
-  const assessment = getModeFpsAssessment(metadata, "start");
+  const assessment = getStartFpsAssessment(metadata, request.analysisMode);
   if (!assessment.allowed) {
-    throw new Error(assessment.message ?? "Start解析には60fps以上の動画が必要です。");
+    throw new Error(assessment.message ?? "この動画ではStart解析を実行できません。");
   }
   if (request.endMs > metadata.durationMs + 1) {
     throw new RangeError("解析範囲が動画の長さを超えています。");
@@ -149,6 +157,7 @@ export async function runStartCandidateAnalysis(
       endMs: request.endMs,
       targetFps: null,
       mode: "start",
+      startAnalysisMode: request.analysisMode,
       signal,
       onFrame: async (decodedFrame) => {
         throwIfAborted(signal);
@@ -180,6 +189,7 @@ export async function runStartCandidateAnalysis(
   const events = deriveStartEventCandidates({
     frames: poseFrames,
     calibration: request.calibration,
+    travelDirection: request.travelDirection,
     startStyle: request.startStyle,
     signalTimestampMs: audioSignalTimestampMs,
   });

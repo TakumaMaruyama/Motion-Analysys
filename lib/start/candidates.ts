@@ -25,7 +25,8 @@ interface CandidateDetection {
 export interface StartCandidateOptions {
   /** 時刻順でなくてもよい。重複時は元動画のフレーム番号を優先する。 */
   readonly frames: readonly PoseFrame[];
-  readonly calibration: StartCalibrationV1;
+  readonly calibration?: StartCalibrationV1 | null;
+  readonly travelDirection?: StartCalibrationV1["travelDirection"];
   readonly startStyle: StartStyle;
   /** Web Audio 等で得られた号砲候補。未取得ならPose候補を過信しない。 */
   readonly signalTimestampMs?: number | null;
@@ -238,6 +239,8 @@ export function deriveStartEventCandidates(
   options: StartCandidateOptions,
 ): readonly StartEvent[] {
   const threshold = options.minimumVisibility ?? MIN_VISIBILITY;
+  const calibration = options.calibration ?? null;
+  const travelDirection = options.travelDirection ?? calibration?.travelDirection ?? "left-to-right";
   const frames = normalizedFrames(options.frames);
   const baselineFrames = frames.slice(0, Math.min(8, frames.length));
   const signalDetection = finite(options.signalTimestampMs ?? Number.NaN) && (options.signalTimestampMs ?? -1) >= 0
@@ -267,7 +270,7 @@ export function deriveStartEventCandidates(
   });
   const initialFeet = baselineFeet?.value ?? [null, null] as const;
   const rearInitial = initialFeet[0] && initialFeet[1]
-    ? options.calibration.travelDirection === "left-to-right"
+    ? travelDirection === "left-to-right"
       ? initialFeet[0].x <= initialFeet[1].x ? initialFeet[0] : initialFeet[1]
       : initialFeet[0].x >= initialFeet[1].x ? initialFeet[0] : initialFeet[1]
     : null;
@@ -278,7 +281,7 @@ export function deriveStartEventCandidates(
         ? firstDisplaced(frames, rearInitial, (frame) => {
           const current = feet(frame, threshold);
           if (!current[0] || !current[1]) return null;
-          return options.calibration.travelDirection === "left-to-right"
+          return travelDirection === "left-to-right"
             ? current[0].x <= current[1].x ? current[0] : current[1]
             : current[0].x >= current[1].x ? current[0] : current[1];
         }, HAND_OR_FOOT_DISTANCE, movementTime)
@@ -298,30 +301,32 @@ export function deriveStartEventCandidates(
     ? eventFromDetection("rear-foot-off", null)
     : hideIfOutOfOrder(rearFoot, movementTime);
 
-  const entry = eventFromDetection(
-    "head-entry",
-    firstCrossing(
+  const entry = calibration
+    ? eventFromDetection(
+      "head-entry",
+      firstCrossing(
       frames,
       (frame) => head(frame, threshold),
       (previous, current) => {
-        const previousSurface = surfaceYAt(previous.x, options.calibration);
-        const currentSurface = surfaceYAt(current.x, options.calibration);
+        const previousSurface = surfaceYAt(previous.x, calibration);
+        const currentSurface = surfaceYAt(current.x, calibration);
         return previousSurface !== null && currentSurface !== null && previous.y < previousSurface && current.y >= currentSurface;
       },
       takeoff.timestampMs,
-    ),
-  );
+      ),
+    )
+    : eventFromDetection("head-entry", null);
   const safeEntry = hideIfOutOfOrder(entry, takeoff.timestampMs);
-  const fiveMeter = safeEntry.timestampMs === null
+  const fiveMeter = safeEntry.timestampMs === null || !calibration
     ? eventFromDetection("five-meter-head-crossing", null)
     : eventFromDetection(
       "five-meter-head-crossing",
       firstCrossing(
         frames,
         (frame) => head(frame, threshold),
-        (previous, current) => options.calibration.travelDirection === "left-to-right"
-          ? previous.x < options.calibration.fiveMeter.x && current.x >= options.calibration.fiveMeter.x
-          : previous.x > options.calibration.fiveMeter.x && current.x <= options.calibration.fiveMeter.x,
+        (previous, current) => travelDirection === "left-to-right"
+          ? previous.x < calibration.fiveMeter.x && current.x >= calibration.fiveMeter.x
+          : previous.x > calibration.fiveMeter.x && current.x <= calibration.fiveMeter.x,
         safeEntry.timestampMs,
       ),
     );

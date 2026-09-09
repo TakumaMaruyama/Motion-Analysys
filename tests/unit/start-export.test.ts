@@ -14,11 +14,30 @@ describe("start export", () => {
     const csv = exportStartAnalysisCsv(result);
     expect(csv.split("\r\n")[0]).toBe("record_type,key,value,unit,timestamp_ms,frame_index,status,source");
     expect(csv).toContain("athlete,age,16,years,,,recorded,result");
+    expect(csv).toContain("analysis,analysis-mode,precision,,,,recorded,result");
+    expect(csv).toContain("analysis,travel-direction,left-to-right,,,,recorded,result");
     expect(csv).toContain("video,effective-fps,120,fps,,,recorded,result");
     expect(csv).toContain("calibration,travel-direction,left-to-right,,,,verified,manual");
     expect(csv).toContain("reference-dataset,id,born-2026-appendix-a,,,,available,static");
     expect(csv).toContain("external-timing,five-meter-stopwatch-time,,ms,,,unavailable,external-stopwatch");
     expect(csv).toContain("event,start:signal:0,signal,,0,0,verified,manual");
+    expect(exportStartAnalysisCsv(result)).toBe(csv);
+  });
+
+  it("records timing-only mode without exporting percentile rows", () => {
+    const result = buildStartAnalysisResult({
+      analysisMode: "timing-only",
+      travelDirection: "right-to-left",
+      athlete: { strokeStyle: "freestyle", age: 16, researchSexCategory: "male" },
+      video: { ...video, effectiveFps: 30, fixedCamera: false, sideOn: false },
+      calibration: null,
+    });
+    expect(JSON.parse(exportStartAnalysisJson(result, false)).analysisMode).toBe("timing-only");
+    expect(JSON.parse(exportStartAnalysisJson(result, false)).travelDirection).toBe("right-to-left");
+    const csv = exportStartAnalysisCsv(result);
+    expect(csv).toContain("analysis,analysis-mode,timing-only,,,,recorded,result");
+    expect(csv).toContain("analysis,travel-direction,right-to-left,,,,recorded,result");
+    expect(csv).not.toContain("\r\npercentile,");
     expect(exportStartAnalysisCsv(result)).toBe(csv);
   });
 });

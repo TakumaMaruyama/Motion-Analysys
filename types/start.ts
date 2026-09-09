@@ -9,6 +9,11 @@ export type StartStrokeStyle =
 
 export type StartStyle = "dive" | "backstroke";
 export type ResearchSexCategory = "male" | "female";
+/**
+ * precision は距離・速度・角度を含む現行の精密解析。
+ * timing-only は30fps以上の映像で時間指標だけを扱う簡易解析。
+ */
+export type StartAnalysisMode = "precision" | "timing-only";
 
 export type StartEventType =
   | "signal"
@@ -170,6 +175,10 @@ export interface StartPercentileResult {
 
 export interface StartAnalysisResultV1 {
   readonly schemaVersion: "1.0";
+  /** 保存結果を別の測定条件として誤比較しないため、選択した手法を保持する。 */
+  readonly analysisMode: StartAnalysisMode;
+  /** 簡易タイムで校正を持たない場合も候補生成条件を再現する。 */
+  readonly travelDirection: StartCalibrationV1["travelDirection"];
   readonly athlete: StartAthleteProfile;
   readonly video: StartVideoInfo;
   readonly calibration: StartCalibrationV1 | null;
