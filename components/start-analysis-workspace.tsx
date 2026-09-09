@@ -22,6 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { runStartCandidateAnalysis } from "@/components/start/analysis-adapter";
 import {
+  autoConfirmStartEvents,
   buildStartAnalysisResult,
   exportStartAnalysisCsv,
   exportStartAnalysisJson,
@@ -57,6 +58,7 @@ interface EventValue {
   readonly confidence: number;
   readonly status: StartEventStatus;
   readonly source: StartEventSource;
+  readonly automaticDecision?: StartEvent["automaticDecision"];
 }
 
 type EventMap = Record<StartEventType, EventValue>;
@@ -72,8 +74,8 @@ type HistorySnapshot = {
 };
 
 const CALIBRATION_STORAGE_KEY = "motionanalysys.start-calibration.v1";
-const precisionSteps = ["動画と選手区分", "0m・5m・水面校正", "候補イベント確認", "局面別結果"] as const;
-const timingOnlySteps = ["動画と選手区分", "進行方向", "候補イベント確認", "時間結果"] as const;
+const precisionSteps = ["動画と選手区分", "0m・5m・水面校正", "自動判定・確認", "局面別結果"] as const;
+const timingOnlySteps = ["動画と選手区分", "進行方向", "自動判定・確認", "時間結果"] as const;
 const timingOnlyMetricIds = new Set([
   "movement-onset-time",
   "block-contact-time",
@@ -148,10 +150,10 @@ function downloadBlob(blob: Blob, name: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-function statusLabel(status: StartEventStatus): string {
-  if (status === "verified") return "確認済み";
-  if (status === "candidate") return "自動候補";
-  if (status === "needs-review") return "要確認";
+function statusLabel(event: EventValue): string {
+  if (event.status === "verified") return "コーチ確認済み";
+  if (event.status === "confirmed") return "自動判定";
+  if (event.status === "candidate" || event.status === "needs-review") return "コーチ確認が必要";
   return "未取得";
 }
 
@@ -195,8 +197,9 @@ function eventMapFromCandidates(candidates: readonly StartEvent[]): EventMap {
       frameIndex: candidate.frameIndex,
       point: candidate.point,
       confidence: candidate.confidence,
-      status: candidate.status === "verified" ? "needs-review" : candidate.status,
+      status: candidate.status,
       source: candidate.source,
+      automaticDecision: candidate.automaticDecision,
     };
   }
   return next;
@@ -231,6 +234,7 @@ export function StartAnalysisWorkspace() {
   const [past, setPast] = useState<readonly HistorySnapshot[]>([]);
   const [future, setFuture] = useState<readonly HistorySnapshot[]>([]);
   const [analysisProgress, setAnalysisProgress] = useState<{ percentage: number; message: string } | null>(null);
+  const [automaticAnalysisCompleted, setAutomaticAnalysisCompleted] = useState(false);
   const [externalFiveMeterTimeMs, setExternalFiveMeterTimeMs] = useState<number | null>(null);
   const [revisionHistory, setRevisionHistory] = useState<readonly StartEventRevision[]>([]);
 
@@ -256,6 +260,15 @@ export function StartAnalysisWorkspace() {
   );
   const steps = analysisMode === "precision" ? precisionSteps : timingOnlySteps;
   const resultCalibration = analysisMode === "precision" ? calibration : null;
+  const automaticContext = useMemo(() => ({
+    analysisMode,
+    effectiveFps: fps,
+    fixedCamera: fixedCamera === true,
+    sideOn: sideOn === true,
+    singleSwimmer: singleSwimmer === true,
+    calibration: resultCalibration,
+    startStyle: stroke === "backstroke" ? "backstroke" as const : "dive" as const,
+  }), [analysisMode, fixedCamera, fps, resultCalibration, sideOn, singleSwimmer, stroke]);
   const captureAllowed = Boolean(
     file && age >= 13 && fps !== null && singleSwimmer === true && (
       analysisMode === "precision"
@@ -263,10 +276,10 @@ export function StartAnalysisWorkspace() {
         : fps + 0.05 >= 30
     ),
   );
-  const allRequiredEventsVerified = requiredEventTypes.every((type) => {
+  const allRequiredEventsResolved = requiredEventTypes.every((type) => {
     const event = events[type];
-    return event.status === "verified" && event.timestampMs !== null && (
-      type !== "head-entry" || analysisMode === "timing-only" || manualHeadEntryPoint
+    return (event.status === "confirmed" || event.status === "verified") && event.timestampMs !== null && (
+      type !== "head-entry" || analysisMode === "timing-only" || event.point !== null
     );
   });
 
@@ -325,9 +338,13 @@ export function StartAnalysisWorkspace() {
     setManualHeadEntryPoint(nextManualHeadEntryPoint);
   }, [events, manualHeadEntryPoint]);
 
+  const recheckAutomaticEvents = useCallback((nextEvents: EventMap): EventMap =>
+    eventMapFromCandidates(autoConfirmStartEvents(toCoreEvents(nextEvents), automaticContext)),
+  [automaticContext]);
+
   const updateEvent = useCallback((type: StartEventType, patch: Partial<EventValue>, options?: { resetHeadPoint?: boolean }) => {
     const existing = events[type];
-    const next: EventMap = {
+    const patched: EventMap = {
       ...events,
       [type]: {
         ...existing,
@@ -335,6 +352,7 @@ export function StartAnalysisWorkspace() {
         id: patch.timestampMs === undefined ? existing.id : timestampId(type, patch.timestampMs ?? null),
       },
     };
+    const next = recheckAutomaticEvents(patched);
     rememberEvents(next, type === "head-entry" && options?.resetHeadPoint ? false : manualHeadEntryPoint);
     const previousEvent = { type, ...existing } as StartEvent;
     const nextEvent = { type, ...next[type] } as StartEvent;
@@ -344,7 +362,7 @@ export function StartAnalysisWorkspace() {
       previous: previousEvent,
       next: nextEvent,
     }]);
-  }, [events, manualHeadEntryPoint, rememberEvents]);
+  }, [events, manualHeadEntryPoint, recheckAutomaticEvents, rememberEvents]);
 
   /** 校正・種目・動画が変わった時に、旧条件で作られた解析証拠を残さない。 */
   const clearAnalysisEvidence = useCallback(() => {
@@ -357,8 +375,27 @@ export function StartAnalysisWorkspace() {
     setPast([]);
     setFuture([]);
     setAnalysisProgress(null);
+    setAutomaticAnalysisCompleted(false);
     setRevisionHistory([]);
   }, []);
+
+  const handleFixedCameraChange = useCallback((value: boolean | null) => {
+    if (value === fixedCamera) return;
+    clearAnalysisEvidence();
+    setFixedCamera(value);
+  }, [clearAnalysisEvidence, fixedCamera]);
+
+  const handleSideOnChange = useCallback((value: boolean | null) => {
+    if (value === sideOn) return;
+    clearAnalysisEvidence();
+    setSideOn(value);
+  }, [clearAnalysisEvidence, sideOn]);
+
+  const handleSingleSwimmerChange = useCallback((value: boolean | null) => {
+    if (value === singleSwimmer) return;
+    clearAnalysisEvidence();
+    setSingleSwimmer(value);
+  }, [clearAnalysisEvidence, singleSwimmer]);
 
   const resetForNewVideo = useCallback(() => {
     clearAnalysisEvidence();
@@ -430,7 +467,7 @@ export function StartAnalysisWorkspace() {
   const handleEventVideoClick = useCallback((event: MouseEvent<HTMLVideoElement>) => {
     if (pointSelectionMode !== "head-entry") return;
     const timestampMs = event.currentTarget.currentTime * 1000;
-    const next = {
+    const patched = {
       ...events,
       "head-entry": {
         ...events["head-entry"],
@@ -441,8 +478,10 @@ export function StartAnalysisWorkspace() {
         confidence: 1,
         status: "needs-review" as const,
         source: "manual" as const,
+        automaticDecision: undefined,
       },
     };
+    const next = recheckAutomaticEvents(patched);
     rememberEvents(next, true);
     const previousEvent = { type: "head-entry" as const, ...events["head-entry"] };
     const nextEvent = { type: "head-entry" as const, ...next["head-entry"] };
@@ -453,7 +492,7 @@ export function StartAnalysisWorkspace() {
       next: nextEvent,
     }]);
     setPointSelectionMode(null);
-  }, [events, frameMs, pointSelectionMode, rememberEvents]);
+  }, [events, frameMs, pointSelectionMode, recheckAutomaticEvents, rememberEvents]);
 
   const setEventAtCurrentFrame = useCallback((type: StartEventType) => {
     const timestampMs = (videoRef.current?.currentTime ?? 0) * 1000;
@@ -468,6 +507,7 @@ export function StartAnalysisWorkspace() {
       status: "needs-review",
       source: "manual",
       confidence: 1,
+      automaticDecision: undefined,
     }, { resetHeadPoint: type === "head-entry" && current.timestampMs !== timestampMs });
   }, [analysisMode, events, frameMs, manualHeadEntryPoint, updateEvent]);
 
@@ -479,6 +519,7 @@ export function StartAnalysisWorkspace() {
       source: "manual",
       confidence: 1,
       frameIndex: current.frameIndex ?? makeFrameIndex(current.timestampMs, frameMs),
+      automaticDecision: undefined,
     });
   }, [analysisMode, events, frameMs, manualHeadEntryPoint, updateEvent]);
 
@@ -491,6 +532,7 @@ export function StartAnalysisWorkspace() {
       frameIndex: makeFrameIndex(timestampMs, frameMs),
       status: "needs-review",
       source: "manual",
+      automaticDecision: undefined,
     }, { resetHeadPoint: type === "head-entry" });
   }, [events, frameMs, updateEvent]);
 
@@ -503,6 +545,7 @@ export function StartAnalysisWorkspace() {
         status: "unavailable",
         source: "manual",
         confidence: 0,
+        automaticDecision: undefined,
       }, { resetHeadPoint: type === "head-entry" });
       return;
     }
@@ -514,6 +557,7 @@ export function StartAnalysisWorkspace() {
       frameIndex: makeFrameIndex(timestampMs, frameMs),
       status: "needs-review",
       source: "manual",
+      automaticDecision: undefined,
     }, { resetHeadPoint: type === "head-entry" });
   }, [events, frameMs, updateEvent]);
 
@@ -541,7 +585,8 @@ export function StartAnalysisWorkspace() {
     const controller = new AbortController();
     analysisAbortRef.current = controller;
     setError(null);
-    setAnalysisProgress({ percentage: 0, message: "自動候補を準備しています" });
+    setAutomaticAnalysisCompleted(false);
+    setAnalysisProgress({ percentage: 0, message: "自動判定を準備しています" });
     try {
       const result = await runStartCandidateAnalysis({
         sourceFile: file,
@@ -549,6 +594,9 @@ export function StartAnalysisWorkspace() {
         calibration: analysisMode === "precision" ? calibration : null,
         travelDirection: direction,
         startStyle: stroke === "backstroke" ? "backstroke" : "dive",
+        fixedCamera: fixedCamera === true,
+        sideOn: sideOn === true,
+        singleSwimmer: singleSwimmer === true,
         startMs: 0,
         endMs: Math.min(metadata.durationMs, 30000),
       }, {
@@ -557,13 +605,22 @@ export function StartAnalysisWorkspace() {
       });
       if (controller.signal.aborted) return;
       setMetadata(result.metadata);
-      setEvents(eventMapFromCandidates(result.events));
+      const nextEvents = eventMapFromCandidates(result.events);
+      setEvents(nextEvents);
       setPoseFrames(result.poseFrames);
       setManualHeadEntryPoint(false);
       setPointSelectionMode(null);
       setPast([]);
       setFuture([]);
       setRevisionHistory([]);
+      setAutomaticAnalysisCompleted(true);
+      const everyRequiredEventResolved = requiredEventTypes.every((type) => {
+        const event = nextEvents[type];
+        return (event.status === "confirmed" || event.status === "verified") &&
+          event.timestampMs !== null &&
+          (type !== "head-entry" || analysisMode === "timing-only" || event.point !== null);
+      });
+      if (everyRequiredEventResolved) setActiveStep(3);
     } catch (reason) {
       if (!(reason instanceof DOMException && reason.name === "AbortError")) {
         setError(reason instanceof Error ? reason.message : "候補解析に失敗しました。");
@@ -574,7 +631,7 @@ export function StartAnalysisWorkspace() {
         setAnalysisProgress(null);
       }
     }
-  }, [analysisMode, calibration, direction, file, metadata, stroke]);
+  }, [analysisMode, calibration, direction, file, fixedCamera, metadata, requiredEventTypes, sideOn, singleSwimmer, stroke]);
 
   const cancelCandidateAnalysis = useCallback(() => {
     analysisAbortRef.current?.abort();
@@ -661,9 +718,9 @@ export function StartAnalysisWorkspace() {
         <p className="text-xs font-black tracking-[.18em] text-indigo-600">START ANALYSIS BETA</p>
         <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 className="text-2xl font-black">競泳スタートを局面別に確認</h2>
+            <h2 className="text-2xl font-black">競泳スタートを自動判定</h2>
             <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-              30fpsから使える簡易タイムと、60fps以上・ほぼ真横で測る精密分析を選べます。
+              明瞭なイベントは自動で結果へ反映し、判断が難しい箇所だけコーチが確認します。
             </p>
           </div>
           <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-950">未検証ベータ</span>
@@ -698,10 +755,10 @@ export function StartAnalysisWorkspace() {
             onModeChange={handleAnalysisModeChange}
             onNext={() => setActiveStep(1)}
             setAge={setAge}
-            setFixedCamera={setFixedCamera}
+            setFixedCamera={handleFixedCameraChange}
             setSex={setSex}
-            setSideOn={setSideOn}
-            setSingleSwimmer={setSingleSwimmer}
+            setSideOn={handleSideOnChange}
+            setSingleSwimmer={handleSingleSwimmerChange}
             setStroke={handleStrokeChange}
             sex={sex}
             sideOn={sideOn}
@@ -733,6 +790,7 @@ export function StartAnalysisWorkspace() {
           <EventReviewStep
             analysisMode={analysisMode}
             analysisProgress={analysisProgress}
+            automaticAnalysisCompleted={automaticAnalysisCompleted}
             calibrationReady={analysisMode === "timing-only" || calibration !== null}
             canAnalyze={captureAllowed && (analysisMode === "timing-only" || calibration !== null) && metadata !== null}
             events={events}
@@ -762,7 +820,7 @@ export function StartAnalysisWorkspace() {
         {activeStep === 3 ? (
           <ResultsStep
             analysisMode={analysisMode}
-            allRequiredEventsVerified={allRequiredEventsVerified}
+            allRequiredEventsResolved={allRequiredEventsResolved}
             externalFiveMeterTimeMs={externalFiveMeterTimeMs}
             onBack={() => setActiveStep(2)}
             onCsv={() => downloadText(exportStartAnalysisCsv(coreResult), "start-analysis.csv", "text/csv")}
@@ -891,7 +949,7 @@ function VideoAndProfileStep({
       {analysisMode === "precision" && age > 32 ? <p className="mt-3 text-sm text-amber-800">33歳以上は解析できますが、Born 2026の参考帯は表示しません。</p> : null}
 
       <div className="mt-4 grid gap-2 text-sm">
-        <label><input type="checkbox" checked={fixedCamera === true} onChange={(event) => setFixedCamera(event.target.checked)} /> 固定カメラを確認{analysisMode === "timing-only" ? "（推奨）" : ""}</label>
+        <label><input type="checkbox" checked={fixedCamera === true} onChange={(event) => setFixedCamera(event.target.checked)} /> 固定カメラを確認{analysisMode === "timing-only" ? "（自動判定に必要）" : ""}</label>
         <label><input type="checkbox" checked={sideOn === true} onChange={(event) => setSideOn(event.target.checked)} /> 真横撮影を確認{analysisMode === "timing-only" ? "（任意）" : ""}</label>
         <label><input type="checkbox" checked={singleSwimmer === true} onChange={(event) => setSingleSwimmer(event.target.checked)} /> 1レーン・1選手を確認</label>
       </div>
@@ -957,11 +1015,11 @@ function CalibrationStep({
           </select>
         </label>
         <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-950">
-          30fpsでは1フレーム約33msです。自動候補の位置を必ず1フレームずつ確認してください。
+          30fpsでは1フレーム約33msです。固定カメラを確認できる場合だけ高スコアのイベントを自動判定し、それ以外はコーチ確認へ回します。
         </p>
         <div className="mt-6 flex justify-between">
           <Button variant="outline" onClick={onBack}>戻る</Button>
-          <Button onClick={onNext}>次へ：候補イベント</Button>
+          <Button onClick={onNext}>次へ：自動判定</Button>
         </div>
       </div>
     );
@@ -993,7 +1051,7 @@ function CalibrationStep({
       </div>
       <div className="mt-6 flex justify-between">
         <Button variant="outline" onClick={onBack}>戻る</Button>
-        <Button onClick={onNext} disabled={!calibration}>次へ：候補イベント</Button>
+        <Button onClick={onNext} disabled={!calibration}>次へ：自動判定</Button>
       </div>
     </div>
   );
@@ -1002,6 +1060,7 @@ function CalibrationStep({
 function EventReviewStep({
   analysisMode,
   analysisProgress,
+  automaticAnalysisCompleted,
   calibrationReady,
   canAnalyze,
   events,
@@ -1028,6 +1087,7 @@ function EventReviewStep({
 }: {
   readonly analysisMode: StartAnalysisMode;
   readonly analysisProgress: { percentage: number; message: string } | null;
+  readonly automaticAnalysisCompleted: boolean;
   readonly calibrationReady: boolean;
   readonly canAnalyze: boolean;
   readonly events: EventMap;
@@ -1052,23 +1112,33 @@ function EventReviewStep({
   readonly videoUrl: string | null;
   readonly visibleEventTypes: readonly StartEventType[];
 }) {
+  const automaticCount = visibleEventTypes.filter((type) => events[type].status === "confirmed").length;
+  const reviewCount = visibleEventTypes.filter((type) => events[type].status === "candidate" || events[type].status === "needs-review").length;
+  const unavailableCount = visibleEventTypes.filter((type) => events[type].status === "unavailable").length;
+
   return (
     <div>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h3 className="font-bold">3. 候補イベント確認</h3>
-          <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">自動解析は候補までです。各イベントは動画とフレームを確認してから確定してください。</p>
+          <h3 className="font-bold">3. 自動判定・確認</h3>
+          <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">明瞭なイベントは自動で数値へ使用し、条件を満たさない箇所だけコーチ確認を求めます。</p>
         </div>
         {analysisProgress ? (
           <Button size="sm" variant="outline" onClick={onCancelCandidates}>
             <Pause className="mr-1 h-4 w-4" />中断
           </Button>
         ) : (
-          <Button size="sm" onClick={onRunCandidates} disabled={!canAnalyze || !calibrationReady}>候補を解析</Button>
+          <Button size="sm" onClick={onRunCandidates} disabled={!canAnalyze || !calibrationReady}>{automaticAnalysisCompleted ? "自動判定を再実行" : "自動判定を開始"}</Button>
         )}
       </div>
       {analysisProgress ? <p className="mt-3 rounded-xl bg-indigo-50 p-3 text-sm text-indigo-950">{analysisProgress.percentage.toFixed(0)}% · {analysisProgress.message}</p> : null}
-      {analysisMode === "timing-only" ? <p className="mt-3 rounded-xl bg-sky-50 p-3 text-sm text-sky-950">簡易タイムでは頭頂入水と5m通過の自動候補を出しません。該当フレームで「現在フレーム」を押して確定してください。</p> : null}
+      {automaticAnalysisCompleted ? (
+        <div className="mt-3 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-950" role="status">
+          <p className="font-bold">自動判定 {automaticCount}件・コーチ確認 {reviewCount}件・未取得 {unavailableCount}件</p>
+          <p className="mt-1 text-xs">自動判定は未検証ベータの推定です。時刻やフレームを変更すると、そのイベントはコーチ確認待ちへ戻ります。</p>
+        </div>
+      ) : null}
+      {analysisMode === "timing-only" ? <p className="mt-3 rounded-xl bg-sky-50 p-3 text-sm text-sky-950">簡易タイムでは頭頂入水と5m通過を自動判定しません。該当フレームで「現在フレーム」を押して確定してください。</p> : null}
       {videoUrl ? <video ref={videoRef} src={videoUrl} controls onClick={onClickVideo} className="mt-4 max-h-[28rem] w-full rounded-xl bg-black" /> : null}
       {analysisMode === "precision" && pointSelectionMode === "head-entry" ? <p className="mt-3 rounded-xl bg-indigo-50 p-3 text-sm text-indigo-950">動画上の頭頂入水位置を1回クリックしてください。その点と現在フレームを候補にします。</p> : null}
 
@@ -1083,8 +1153,9 @@ function EventReviewStep({
                 <div>
                   <p className="font-bold">{eventLabels[type]}</p>
                   <p className="text-xs text-slate-500">
-                    {statusLabel(event.status)}{event.status !== "unavailable" ? ` · 信頼度 ${(event.confidence * 100).toFixed(0)}%` : ""}
-                    {requiresPoint ? ` · ${manualHeadEntryPoint ? "点指定済み" : "コーチの点指定が必要"}` : ""}
+                    {statusLabel(event)}{event.status !== "unavailable" ? ` · 判定スコア ${(event.confidence * 100).toFixed(0)}%` : ""}
+                    {requiresPoint && event.status !== "confirmed" ? ` · ${manualHeadEntryPoint ? "点指定済み" : "コーチの点指定が必要"}` : ""}
+                    {event.status === "confirmed" && (type === "head-entry" || type === "five-meter-head-crossing") ? " · Pose身体軸からの頭頂推定点" : ""}
                   </p>
                 </div>
                 <span className="text-xs text-slate-500">{event.frameIndex === null ? "frame —" : `frame ${event.frameIndex}`}</span>
@@ -1112,7 +1183,11 @@ function EventReviewStep({
               <div className="mt-2 flex flex-wrap gap-2">
                 {requiresPoint ? <Button size="sm" variant="outline" onClick={onSelectEntryPoint}>動画で頭頂点を指定</Button> : null}
                 <Button size="sm" onClick={() => onVerify(type)} disabled={!canVerify}>
-                  {event.status === "verified" ? <><Check className="mr-1 h-4 w-4" />確認済み</> : "確認して確定"}
+                  {event.status === "verified"
+                    ? <><Check className="mr-1 h-4 w-4" />コーチ確認済み</>
+                    : event.status === "confirmed"
+                      ? <><Check className="mr-1 h-4 w-4" />コーチ確認に変更</>
+                      : "確認して確定"}
                 </Button>
                 {event.timestampMs !== null ? <span className="self-center text-xs text-slate-500">{(event.timestampMs / 1000).toFixed(3)} s · 1f = {(frameMs / 1000).toFixed(4)} s</span> : null}
               </div>
@@ -1124,7 +1199,7 @@ function EventReviewStep({
         <Button size="sm" variant="outline" onClick={onUndo} disabled={!undoEnabled}><Undo2 className="mr-1 h-4 w-4" />Undo</Button>
         <Button size="sm" variant="outline" onClick={onRedo} disabled={!redoEnabled}><Redo2 className="mr-1 h-4 w-4" />Redo</Button>
       </div>
-      <p className="mt-3 flex gap-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-950"><AlertTriangle className="h-4 w-4 shrink-0" />候補・要確認イベントは、確認済みになるまで数値の依存条件を満たしません。画面外・飛沫・遮蔽は未取得のままにしてください。</p>
+      <p className="mt-3 flex gap-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-950"><AlertTriangle className="h-4 w-4 shrink-0" />自動判定は推定です。コーチ確認が必要なイベントは確定されるまで数値へ使用しません。画面外・飛沫・遮蔽は未取得のままにしてください。</p>
       <div className="mt-6 flex justify-between">
         <Button variant="outline" onClick={onBack}>戻る</Button>
         <Button onClick={onNext}>結果を見る</Button>
@@ -1135,7 +1210,7 @@ function EventReviewStep({
 
 function ResultsStep({
   analysisMode,
-  allRequiredEventsVerified,
+  allRequiredEventsResolved,
   externalFiveMeterTimeMs,
   onBack,
   onCsv,
@@ -1146,7 +1221,7 @@ function ResultsStep({
   showBands,
 }: {
   readonly analysisMode: StartAnalysisMode;
-  readonly allRequiredEventsVerified: boolean;
+  readonly allRequiredEventsResolved: boolean;
   readonly externalFiveMeterTimeMs: number | null;
   readonly onBack: () => void;
   readonly onCsv: () => void;
@@ -1169,19 +1244,21 @@ function ResultsStep({
   const displayedMetrics = analysisMode === "precision"
     ? result.metrics
     : result.metrics.filter((metric) => timingOnlyMetricIds.has(metric.id));
+  const automaticCount = result.events.filter((event) => event.status === "confirmed").length;
 
   return (
     <div>
       <h3 className="font-bold">4. {analysisMode === "precision" ? "局面別結果" : "簡易タイム結果"}</h3>
       {analysisMode === "timing-only" ? <p className="mt-3 rounded-xl bg-sky-50 p-3 text-sm text-sky-950">30fps以上の時間専用参考計測です。距離・速度・角度・百分位は表示しません。</p> : null}
-      {!allRequiredEventsVerified ? <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-950">必要イベントをコーチがすべて確認するまで、値は確定しません。以下の「—」は欠測または未確定です。</p> : null}
+      {automaticCount > 0 ? <p className="mt-3 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-950">自動判定を{automaticCount}件含む暫定結果です。研究参考帯はコーチ確認済みの指標だけに表示します。</p> : null}
+      {!allRequiredEventsResolved ? <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-950">コーチ確認が必要なイベントが残っています。以下の「—」は欠測または未確定です。</p> : null}
       {result.quality.warnings.length > 0 ? <div className="mt-3 rounded-xl bg-slate-50 p-3 text-sm text-slate-700 dark:bg-slate-950/30 dark:text-slate-200"><p className="font-bold">品質・制約</p><ul className="mt-1 list-disc pl-5">{result.quality.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div> : null}
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         {displayedMetrics.map((metric) => (
           <div key={metric.id} className="rounded-xl border p-3">
             <p className="text-xs font-bold text-slate-500">{metric.label}</p>
             <p className="mt-1 text-xl font-black">{metric.value === null ? "—" : `${metric.value.toFixed(2)} ${metric.unit}`}</p>
-            <p className="mt-1 text-xs text-slate-500">{metric.note ?? ""}</p>
+            <p className="mt-1 text-xs text-slate-500">{metric.status === "confirmed" ? "自動判定を含む暫定値。" : ""}{metric.note ?? ""}</p>
           </div>
         ))}
       </div>

@@ -1,4 +1,6 @@
 import { WorkerPoseEstimator } from "@/lib/pose/worker-estimator";
+import { findAudioSignalWindow } from "@/lib/start/audio-signal";
+import { autoConfirmStartEvents } from "@/lib/start/auto-confirmation";
 import { deriveStartEventCandidates } from "@/lib/start/candidates";
 import {
   decodeCompetitionFrames,
@@ -21,6 +23,9 @@ export interface StartCandidateAnalysisRequest {
   readonly calibration: StartCalibrationV1 | null;
   readonly travelDirection: StartCalibrationV1["travelDirection"];
   readonly startStyle: StartStyle;
+  readonly fixedCamera: boolean;
+  readonly sideOn: boolean;
+  readonly singleSwimmer: boolean;
   /** スタートを含む切り出し範囲。最大30秒、元fpsで精査する。 */
   readonly startMs: number;
   readonly endMs: number;
@@ -37,6 +42,8 @@ export interface StartCandidateAnalysisResult {
   readonly events: readonly StartEvent[];
   /** Web Audio で検出した候補。取得できない場合はnullであり、0ではない。 */
   readonly audioSignalTimestampMs: number | null;
+  /** 校正済み確率ではなく、音声ピークの明瞭さを表す判定スコア。 */
+  readonly audioSignalConfidence: number | null;
 }
 
 function throwIfAborted(signal: AbortSignal): void {
@@ -49,22 +56,21 @@ function timestampKey(timestampMs: number): string {
   return timestampMs.toFixed(3);
 }
 
-function median(values: readonly number[]): number {
-  const sorted = values.slice().sort((first, second) => first - second);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0
-    ? (sorted[middle - 1] + sorted[middle]) / 2
-    : sorted[middle];
+/**
+ * 音声の大きな瞬間を信号候補として返す。最終的な自動判定は、明瞭さに加えて
+ * Pose初動との時間窓、撮影条件、他イベントとの依存関係も検査する。
+ */
+interface AudioSignalDetection {
+  readonly timestampMs: number;
+  readonly confidence: number;
 }
 
-/**
- * 音声の大きな瞬間を信号「候補」として返す。音色・トラック・開始位置を
- * 仮定できないため、成功してもneeds-reviewとしてのみ使用する。
- */
-async function detectAudioSignalTimestamp(
+async function detectAudioSignal(
   file: File,
+  startMs: number,
+  endMs: number,
   signal: AbortSignal,
-): Promise<number | null> {
+): Promise<AudioSignalDetection | null> {
   const browser = globalThis as typeof globalThis & {
     readonly webkitAudioContext?: typeof AudioContext;
   };
@@ -82,11 +88,14 @@ async function detectAudioSignalTimestamp(
     if (decoded.length === 0 || decoded.numberOfChannels === 0) return null;
 
     const windowSize = Math.max(256, Math.floor(decoded.sampleRate * 0.008));
+    const startSample = Math.max(0, Math.floor((startMs / 1000) * decoded.sampleRate));
+    const endSample = Math.min(decoded.length, Math.ceil((endMs / 1000) * decoded.sampleRate));
+    if (endSample <= startSample) return null;
     const windows: number[] = [];
-    for (let offset = 0; offset < decoded.length; offset += windowSize) {
+    for (let offset = startSample; offset < endSample; offset += windowSize) {
       let sum = 0;
       let count = 0;
-      const end = Math.min(decoded.length, offset + windowSize);
+      const end = Math.min(endSample, offset + windowSize);
       for (let channel = 0; channel < decoded.numberOfChannels; channel += 1) {
         const data = decoded.getChannelData(channel);
         for (let index = offset; index < end; index += 1) {
@@ -96,13 +105,12 @@ async function detectAudioSignalTimestamp(
       }
       windows.push(count > 0 ? Math.sqrt(sum / count) : 0);
     }
-    if (windows.length === 0) return null;
-    const peak = Math.max(...windows);
-    const noiseFloor = median(windows);
-    // 無音に近いトラックや、全体が同程度に騒がしい環境音は候補化しない。
-    if (!Number.isFinite(peak) || peak < 0.015 || peak < Math.max(0.02, noiseFloor * 2)) return null;
-    const peakIndex = windows.findIndex((value) => value >= peak * 0.85);
-    return peakIndex < 0 ? null : (peakIndex * windowSize * 1000) / decoded.sampleRate;
+    const candidate = findAudioSignalWindow(windows);
+    if (!candidate) return null;
+    return {
+      timestampMs: ((startSample + candidate.windowIndex * windowSize) * 1000) / decoded.sampleRate,
+      confidence: candidate.confidence,
+    };
   } catch {
     // 音声トラックなし、codec非対応、ユーザーによる中断以外はPose候補にフォールバックする。
     if (signal.aborted) throw new DOMException("解析を中断しました。", "AbortError");
@@ -113,8 +121,9 @@ async function detectAudioSignalTimestamp(
 }
 
 /**
- * 既存のWebCodecs+Worker Pose経路を元fpsで再利用し、Start候補だけを返す。
- * 確定イベント・数値化はUI側のコーチ確認操作に委ねる。
+ * 既存のWebCodecs+Worker Pose経路を元fpsで再利用し、Startイベントを返す。
+ * 撮影・スコア・時系列ポリシーを満たすイベントは未検証ベータの自動判定、
+ * それ以外はコーチ確認へ安全側に倒す。
  */
 export async function runStartCandidateAnalysis(
   request: StartCandidateAnalysisRequest,
@@ -145,7 +154,7 @@ export async function runStartCandidateAnalysis(
   const estimator = new WorkerPoseEstimator();
   const frames = new Map<string, PoseFrame>();
   const analysisDuration = request.endMs - request.startMs;
-  const audioSignal = detectAudioSignalTimestamp(request.sourceFile, signal);
+  const audioSignal = detectAudioSignal(request.sourceFile, request.startMs, request.endMs, signal);
 
   try {
     onProgress?.(6, "姿勢推定モデルを準備しています");
@@ -180,19 +189,36 @@ export async function runStartCandidateAnalysis(
     await estimator.close().catch(() => undefined);
   }
 
-  const audioSignalTimestampMs = await audioSignal;
+  const audioSignalDetection = await audioSignal;
+  const audioSignalTimestampMs = audioSignalDetection?.timestampMs ?? null;
+  const audioSignalConfidence = audioSignalDetection?.confidence ?? null;
   throwIfAborted(signal);
   const poseFrames = [...frames.values()].sort((first, second) =>
     first.timestampMs - second.timestampMs ||
     (first.sourceFrameIndex ?? 0) - (second.sourceFrameIndex ?? 0),
   );
-  const events = deriveStartEventCandidates({
+  const candidates = deriveStartEventCandidates({
     frames: poseFrames,
     calibration: request.calibration,
     travelDirection: request.travelDirection,
     startStyle: request.startStyle,
     signalTimestampMs: audioSignalTimestampMs,
+    signalFrameIndex: audioSignalTimestampMs === null || metadata.effectiveFps === null
+      ? null
+      : Math.max(0, Math.round(audioSignalTimestampMs / (1000 / metadata.effectiveFps))),
+    signalConfidence: audioSignalConfidence ?? 0,
   });
-  onProgress?.(100, "自動候補を作成しました。フレームを確認して確定してください。");
-  return { metadata, poseFrames, events, audioSignalTimestampMs };
+  const events = autoConfirmStartEvents(candidates, {
+    analysisMode: request.analysisMode,
+    effectiveFps: metadata.effectiveFps,
+    fixedCamera: request.fixedCamera,
+    sideOn: request.sideOn,
+    singleSwimmer: request.singleSwimmer,
+    calibration: request.calibration,
+    startStyle: request.startStyle,
+  });
+  const automaticCount = events.filter((event) => event.status === "confirmed").length;
+  const reviewCount = events.filter((event) => event.status === "candidate" || event.status === "needs-review").length;
+  onProgress?.(100, `自動判定 ${automaticCount}件・コーチ確認 ${reviewCount}件`);
+  return { metadata, poseFrames, events, audioSignalTimestampMs, audioSignalConfidence };
 }

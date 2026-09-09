@@ -25,6 +25,10 @@ import {
   waterSurfaceAngleRadians,
 } from "./calibration";
 import {
+  autoConfirmStartEvents,
+  isValidAutoConfirmedStartEvent,
+} from "./auto-confirmation";
+import {
   BORN_2026_REFERENCE_DATASET,
   percentileForStartMetric,
 } from "./references";
@@ -86,20 +90,28 @@ function isValidVerifiedStartEvent(event: StartEvent): boolean {
     event.frameIndex >= 0;
 }
 
-/** verifiedは、手動でフレームと時刻を確定した再現可能なイベントに限る。 */
+function isResolvedStartEvent(event: StartEvent): boolean {
+  return isValidVerifiedStartEvent(event) || isValidAutoConfirmedStartEvent(event);
+}
+
+/** 手動確認と自動判定の双方について、出所に対応する証跡を検査する。 */
 export function validateVerifiedStartEvent(event: StartEvent): void {
-  if (event.status !== "verified") return;
-  if (!isValidVerifiedStartEvent(event)) {
+  if (event.status === "verified" && !isValidVerifiedStartEvent(event)) {
     throw new TypeError(
       "A verified start event requires a non-negative finite timestamp, a non-negative integer frame index, and manual source.",
+    );
+  }
+  if (event.status === "confirmed" && !isValidAutoConfirmedStartEvent(event)) {
+    throw new TypeError(
+      "An automatically confirmed start event requires a valid frame, score, source, and policy decision.",
     );
   }
 }
 
 function eventByType(events: readonly StartEvent[], type: StartEventType): StartEvent | undefined {
   const matching = events.filter((event) => event.type === type);
-  // 同種の自動候補より、手動でフレーム確認されたイベントを常に優先する。
-  return matching.find(isValidVerifiedStartEvent) ?? matching[0];
+  // 同種の自動判定より、コーチが確認したイベントを常に優先する。
+  return matching.find(isValidVerifiedStartEvent) ?? matching.find(isValidAutoConfirmedStartEvent) ?? matching[0];
 }
 
 function metric(
@@ -112,18 +124,19 @@ function metric(
   const definition = START_METRIC_DEFINITIONS.find((item) => item.id === id)!;
   const dependencies = required.map((type) => eventByType(events, type));
   const requiredEventIds = dependencies.flatMap((event) => event ? [event.id] : []);
-  const eventsVerified = dependencies.length === required.length && dependencies.every(
-    (event) => finiteTimestamp(event) && event.status === "verified",
+  const eventsResolved = dependencies.length === required.length && dependencies.every(
+    (event) => finiteTimestamp(event) && isResolvedStartEvent(event),
   );
-  const valid = eventsVerified && value !== null && Number.isFinite(value);
+  const valid = eventsResolved && value !== null && Number.isFinite(value);
+  const containsAutomatic = dependencies.some((event) => event?.status === "confirmed");
   return {
     id,
     label: definition.label,
     value: valid ? value : null,
     unit: definition.unit,
-    status: valid ? "verified" : "unavailable",
+    status: valid ? containsAutomatic ? "confirmed" : "verified" : "unavailable",
     requiredEventIds,
-    note: valid ? note : (note ?? "必要イベントをコーチが確認するまで計算しません。"),
+    note: valid ? note : (note ?? "必要イベントの自動判定またはコーチ確認が完了するまで計算しません。"),
   };
 }
 
@@ -133,7 +146,7 @@ export function startStyleForStroke(strokeStyle: StartAthleteProfile["strokeStyl
 }
 
 /**
- * verifiedイベントだけの順序違反を返す。候補は品質・指標を抑止しない。
+ * 自動判定またはコーチ確認済みイベントの順序違反を返す。
  */
 export function validateStartEventSequence(
   events: readonly StartEvent[],
@@ -144,7 +157,7 @@ export function validateStartEventSequence(
   let previousOrder = -1;
   let previousTime = -Infinity;
   for (const event of events
-    .filter((item) => item.status === "verified" && item.timestampMs !== null)
+    .filter((item) => (item.status === "confirmed" || item.status === "verified") && item.timestampMs !== null)
     .slice()
     .sort((first, second) => (first.timestampMs! - second.timestampMs!) || first.id.localeCompare(second.id))) {
     if (seen.has(event.type)) errors.push(`イベント ${event.type} が重複しています。`);
@@ -162,7 +175,7 @@ export function validateStartEventSequence(
   return errors;
 }
 
-/** 自動推定候補を作る。候補のままでは、どの指標も確定しない。 */
+/** 自動推定候補を作る。自動判定ポリシーまたはコーチ確認を通るまで指標を確定しない。 */
 export function createStartEventCandidate(
   type: StartEventType,
   candidate: Omit<StartEvent, "id" | "type" | "status" | "source" | "confidence"> & { readonly confidence?: number },
@@ -203,6 +216,7 @@ export function verifyStartEvent(
     confidence: 1,
     status: "verified",
     source: "manual",
+    automaticDecision: undefined,
   };
 }
 
@@ -353,12 +367,13 @@ export function assessStartAnalysisQuality(
   } else {
     if (video.effectiveFps === null || video.effectiveFps + 0.05 < 30) warnings.push("簡易タイムモードは最低30fpsが必要です。");
     else if (video.effectiveFps < 60) warnings.push("30fpsでは1フレーム約33msです。時間は粗い参考値として扱ってください。");
-    if (!video.fixedCamera) warnings.push("カメラが動く映像では自動候補がずれるため、各イベントを手動で確認してください。");
+    if (!video.fixedCamera) warnings.push("カメラが動く映像では自動判定を行わないため、各イベントを手動で確認してください。");
     if (!video.sideOn) warnings.push("斜め撮影では距離・速度・角度を測定せず、時間指標だけを表示します。");
   }
   if (!video.singleSwimmer) warnings.push("1レーン・1選手の映像が必要です。");
-  if (events.some((event) => event.status === "candidate" || event.status === "needs-review")) warnings.push("自動候補はコーチ確認後にのみ数値化されます。");
-  if (events.some((event) => event.status === "unavailable")) warnings.push("一部イベントは画面外または低信頼度です。");
+  if (events.some((event) => event.status === "candidate" || event.status === "needs-review")) warnings.push("一部イベントはコーチ確認が必要です。確認されるまで依存する数値へ使用しません。");
+  if (events.some((event) => event.status === "confirmed")) warnings.push("未検証ベータの自動判定を含みます。重要な判断では映像を確認してください。");
+  if (events.some((event) => event.status === "unavailable")) warnings.push("一部イベントは画面外または判定スコア不足です。");
   const sequenceErrors = validateStartEventSequence(events, athlete.startStyle);
   warnings.push(...sequenceErrors);
   const baseUnavailable =
@@ -397,7 +412,18 @@ export function buildStartAnalysisResult(options: BuildStartAnalysisOptions): St
   const analysisMode = options.analysisMode ?? "precision";
   const travelDirection = options.travelDirection ?? options.calibration?.travelDirection ?? "left-to-right";
   const athlete: StartAthleteProfile = { ...options.athlete, startStyle: startStyleForStroke(options.athlete.strokeStyle) };
-  const events = [...(options.events ?? [])].sort((first, second) => (first.timestampMs ?? Number.POSITIVE_INFINITY) - (second.timestampMs ?? Number.POSITIVE_INFINITY) || first.id.localeCompare(second.id));
+  const suppliedEvents = [...(options.events ?? [])];
+  suppliedEvents.forEach(validateVerifiedStartEvent);
+  // 保存済みの自動判定証跡だけを信用せず、現在の撮影条件・校正・先行イベントで再評価する。
+  const events = [...autoConfirmStartEvents(suppliedEvents, {
+    analysisMode,
+    effectiveFps: options.video.effectiveFps,
+    fixedCamera: options.video.fixedCamera,
+    sideOn: options.video.sideOn,
+    singleSwimmer: options.video.singleSwimmer,
+    calibration: options.calibration,
+    startStyle: athlete.startStyle,
+  })].sort((first, second) => (first.timestampMs ?? Number.POSITIVE_INFINITY) - (second.timestampMs ?? Number.POSITIVE_INFINITY) || first.id.localeCompare(second.id));
   events.forEach(validateVerifiedStartEvent);
   const poseFrames = options.poseFrames ?? [];
   const externalFiveMeterTimeMs = options.externalFiveMeterTimeMs ?? null;
@@ -490,5 +516,5 @@ export function replaceStartEvent(
 }
 
 export function startEventStatusAllowsMetric(status: StartEventStatus): boolean {
-  return status === "verified";
+  return status === "confirmed" || status === "verified";
 }

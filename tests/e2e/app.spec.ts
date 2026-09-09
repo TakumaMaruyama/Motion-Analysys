@@ -61,6 +61,7 @@ test("ホーム画面はStart専用で4種目を選べる", async ({ page }) => 
   await expect(stroke.locator("option")).toHaveCount(4);
   await expect(page.getByLabel("精密モード")).toBeChecked();
   await expect(page.getByLabel("簡易タイムモード")).not.toBeChecked();
+  await expect(page.getByRole("heading", { name: "競泳スタートを自動判定" })).toBeVisible();
 });
 
 test("13歳未満は解析を開始できない", async ({ page }) => {
@@ -107,7 +108,7 @@ test("背泳ぎでは後足離れだけを除外する", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("start-analysis-workspace")).toHaveAttribute("data-hydrated", "true");
   await page.getByLabel("種目").selectOption("backstroke");
-  await page.getByRole("button", { name: /候補イベント確認/ }).click();
+  await page.getByRole("button", { name: /自動判定・確認/ }).click();
   await expect(page.getByText("手の離台", { exact: true })).toBeVisible();
   await expect(page.getByText("後足の離台", { exact: true })).toHaveCount(0);
   await expect(page.getByText("5m頭頂通過（任意）", { exact: true })).toBeVisible();
@@ -116,26 +117,28 @@ test("背泳ぎでは後足離れだけを除外する", async ({ page }) => {
 test("種目切替は飛び込み候補を残さず、背泳ぎへ後足離台を持ち込まない", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("start-analysis-workspace")).toHaveAttribute("data-hydrated", "true");
-  await page.getByRole("button", { name: /候補イベント確認/ }).click();
+  await page.getByRole("button", { name: /自動判定・確認/ }).click();
   const rearFoot = page.getByLabel("後足の離台時刻");
   await rearFoot.fill("0.200");
   await page.getByRole("button", { name: /動画と選手区分/ }).click();
   await page.getByLabel("種目").selectOption("backstroke");
-  await page.getByRole("button", { name: /候補イベント確認/ }).click();
+  await page.getByRole("button", { name: /自動判定・確認/ }).click();
   await expect(page.getByText("後足の離台", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: /動画と選手区分/ }).click();
   await page.getByLabel("種目").selectOption("freestyle");
-  await page.getByRole("button", { name: /候補イベント確認/ }).click();
+  await page.getByRole("button", { name: /自動判定・確認/ }).click();
   await expect(page.getByLabel("後足の離台時刻")).toHaveValue("");
 });
 
 test("候補未実行のUIはイベントを未取得として手動確認を求める", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("start-analysis-workspace")).toHaveAttribute("data-hydrated", "true");
-  await page.getByRole("button", { name: /候補イベント確認/ }).click();
+  await page.getByRole("button", { name: /自動判定・確認/ }).click();
   await expect(page.getByText("号砲／スタート信号", { exact: true }).locator("..").getByText("未取得", { exact: true })).toBeVisible();
   await expect(page.getByText("後足の離台", { exact: true }).locator("..").getByText("未取得", { exact: true })).toBeVisible();
-  await expect(page.getByText("候補・要確認イベントは、確認済みになるまで数値の依存条件を満たしません。画面外・飛沫・遮蔽は未取得のままにしてください。", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "自動判定を開始" })).toBeVisible();
+  await expect(page.getByText("明瞭なイベントは自動で数値へ使用し、条件を満たさない箇所だけコーチ確認を求めます。", { exact: true })).toBeVisible();
+  await expect(page.getByText("自動判定は推定です。コーチ確認が必要なイベントは確定されるまで数値へ使用しません。画面外・飛沫・遮蔽は未取得のままにしてください。", { exact: true })).toBeVisible();
 });
 
 test("撮影品質UIの確認を外すと解析条件を満たさない", async ({ page }) => {
@@ -152,7 +155,7 @@ test("撮影品質UIの確認を外すと解析条件を満たさない", async 
 test("5m任意イベントが未取得でも結果を開ける", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("start-analysis-workspace")).toHaveAttribute("data-hydrated", "true");
-  await page.getByRole("button", { name: /候補イベント確認/ }).click();
+  await page.getByRole("button", { name: /自動判定・確認/ }).click();
   await expect(page.getByLabel("5m頭頂通過（任意）時刻")).toHaveValue("");
   await page.getByRole("button", { name: /局面別結果/ }).click();
   const metric = page.getByText("5m時間", { exact: true }).locator("..");
@@ -163,7 +166,7 @@ test("5m任意イベントが未取得でも結果を開ける", async ({ page }
 test("未確認イベントは結果を作らずUndoで戻せる", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("start-analysis-workspace")).toHaveAttribute("data-hydrated", "true");
-  await page.getByRole("button", { name: /候補イベント確認/ }).click();
+  await page.getByRole("button", { name: /自動判定・確認/ }).click();
   const signal = page.getByLabel("号砲／スタート信号時刻");
   await signal.fill("0.100");
   await expect(page.getByRole("button", { name: "Undo" })).toBeEnabled();
@@ -207,13 +210,13 @@ test("簡易タイム結果は時間指標だけを表示する", async ({ page 
 test("測定モードを切り替えると旧モードのイベントを残さない", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("start-analysis-workspace")).toHaveAttribute("data-hydrated", "true");
-  await page.getByRole("button", { name: /候補イベント確認/ }).click();
+  await page.getByRole("button", { name: /自動判定・確認/ }).click();
   await page.getByLabel("号砲／スタート信号時刻").fill("0.100");
   await page.getByRole("button", { name: /動画と選手区分/ }).click();
   await page.getByLabel("簡易タイムモード").check();
-  await page.getByRole("button", { name: /候補イベント確認/ }).click();
+  await page.getByRole("button", { name: /自動判定・確認/ }).click();
   await expect(page.getByLabel("号砲／スタート信号時刻")).toHaveValue("");
-  await expect(page.getByText("簡易タイムでは頭頂入水と5m通過の自動候補を出しません。該当フレームで「現在フレーム」を押して確定してください。", { exact: true })).toBeVisible();
+  await expect(page.getByText("簡易タイムでは頭頂入水と5m通過を自動判定しません。該当フレームで「現在フレーム」を押して確定してください。", { exact: true })).toBeVisible();
 });
 
 test("30fps簡易タイムを手動確定して再現可能な結果を保存する", async ({ page, browserName }) => {
@@ -224,7 +227,7 @@ test("30fps簡易タイムを手動確定して再現可能な結果を保存す
   await setGeneratedBlankVideo(page, 30);
   await expect(page.getByText(/1フレーム約33ms/)).toBeVisible({ timeout: 30_000 });
   await page.getByLabel(/1レーン・1選手を確認/).check();
-  await page.getByRole("button", { name: /候補イベント確認/ }).click();
+  await page.getByRole("button", { name: /自動判定・確認/ }).click();
 
   const confirmEvent = async (label: string, seconds: string) => {
     const card = page.locator("div.rounded-xl.border.p-3").filter({ has: page.getByText(label, { exact: true }) });

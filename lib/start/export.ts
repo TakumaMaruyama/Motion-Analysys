@@ -123,9 +123,26 @@ export function exportStartAnalysisCsv(result: StartAnalysisResultV1): string {
     add("event-point", `${event.id}:x`, event.point?.x ?? null, "normalized", event.timestampMs, event.frameIndex, event.status, event.source);
     add("event-point", `${event.id}:y`, event.point?.y ?? null, "normalized", event.timestampMs, event.frameIndex, event.status, event.source);
     add("event-confidence", event.id, event.confidence, "ratio", event.timestampMs, event.frameIndex, event.status, event.source);
+    if (event.automaticDecision) {
+      add("event-automation", `${event.id}:policy`, event.automaticDecision.policyVersion, "", event.timestampMs, event.frameIndex, event.status, "automatic");
+      add("event-automation", `${event.id}:score-kind`, event.automaticDecision.scoreKind, "", event.timestampMs, event.frameIndex, event.status, "automatic");
+      add("event-automation", `${event.id}:method`, event.automaticDecision.method, "", event.timestampMs, event.frameIndex, event.status, "automatic");
+      add("event-automation", `${event.id}:reasons`, event.automaticDecision.reasons.join("|"), "", event.timestampMs, event.frameIndex, event.status, "automatic");
+    }
   }
   for (const item of result.metrics) {
-    add("metric", item.id, item.value, item.unit, null, null, item.status, item.status === "verified" ? "manual" : "");
+    const dependencies = item.requiredEventIds.flatMap((id) => {
+      const event = result.events.find((candidate) => candidate.id === id);
+      return event ? [event] : [];
+    });
+    const source = item.status === "unavailable"
+      ? "derived"
+      : dependencies.every((event) => event.status === "verified" && event.source === "manual")
+        ? "manual"
+        : dependencies.every((event) => event.status === "confirmed" && event.source === "automatic")
+          ? "automatic"
+          : "mixed";
+    add("metric", item.id, item.value, item.unit, null, null, item.status, source);
   }
   for (const percentile of result.percentiles) {
     add("percentile", percentile.metric, percentile.band, "", null, null, percentile.referenceStatus, BORN_2026_REFERENCE_DATASET.id);

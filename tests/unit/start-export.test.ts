@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildStartAnalysisResult, createStartEventCandidate, exportStartAnalysisCsv, exportStartAnalysisJson, verifyStartEvent } from "../../lib/start";
+import { autoConfirmStartEvents, buildStartAnalysisResult, createStartEventCandidate, exportStartAnalysisCsv, exportStartAnalysisJson, verifyStartEvent } from "../../lib/start";
 import type { StartCalibrationV1, StartVideoInfo } from "../../types/start";
 
 const calibration: StartCalibrationV1 = { schemaVersion: "1.0", imageWidth: 640, imageHeight: 360, zeroMeter: { x: 0.1, y: 0.5 }, fiveMeter: { x: 0.6, y: 0.5 }, waterSurface: [{ x: 0, y: 0.5 }, { x: 1, y: 0.5 }], travelDirection: "left-to-right" };
@@ -39,5 +39,34 @@ describe("start export", () => {
     expect(csv).toContain("analysis,travel-direction,right-to-left,,,,recorded,result");
     expect(csv).not.toContain("\r\npercentile,");
     expect(exportStartAnalysisCsv(result)).toBe(csv);
+  });
+
+  it("exports automatic decision evidence without labelling derived metrics as manual", () => {
+    const candidates = [
+      createStartEventCandidate("signal", { timestampMs: 0, frameIndex: 0, point: null, confidence: 0.96 }),
+      createStartEventCandidate("movement-onset", { timestampMs: 120, frameIndex: 14, point: null, confidence: 0.96 }),
+      createStartEventCandidate("takeoff", { timestampMs: 700, frameIndex: 84, point: null, confidence: 0.96 }),
+    ];
+    const events = autoConfirmStartEvents(candidates, {
+      analysisMode: "precision",
+      effectiveFps: 120,
+      fixedCamera: true,
+      sideOn: true,
+      singleSwimmer: true,
+      calibration,
+      startStyle: "dive",
+    });
+    const result = buildStartAnalysisResult({
+      athlete: { strokeStyle: "freestyle", age: 16, researchSexCategory: "male" },
+      video,
+      calibration,
+      events,
+    });
+    const csv = exportStartAnalysisCsv(result);
+
+    expect(csv).toContain("event-automation,start:signal:0:policy,start-heuristic-auto-v1,,0,0,confirmed,automatic");
+    expect(csv).toContain("event-automation,start:signal:0:method,audio-rms-peak-v1,,0,0,confirmed,automatic");
+    expect(csv).toContain("metric,block-contact-time,700,ms,,,confirmed,automatic");
+    expect(csv).not.toContain("metric,block-contact-time,700,ms,,,confirmed,manual");
   });
 });

@@ -25,27 +25,44 @@ export type StartEventType =
   | "five-meter-head-crossing";
 
 /**
- * candidate は自動候補であり、計算には絶対に使用しない。
+ * confirmed は自動判定ポリシーを満たした未検証ベータの自動確定。
  * verified はコーチがフレームを確認したイベントだけに設定する。
  */
 export type StartEventStatus =
   | "candidate"
   | "needs-review"
+  | "confirmed"
   | "verified"
   | "unavailable";
 
 export type StartEventSource = "automatic" | "manual";
+
+export interface StartAutomaticDecision {
+  readonly policyVersion: "start-heuristic-auto-v1";
+  /** confidenceは校正済み確率ではなく、複数の映像根拠を合成した判定スコア。 */
+  readonly scoreKind: "heuristic";
+  readonly method:
+    | "audio-rms-peak-v1"
+    | "pose-trunk-displacement-v1"
+    | "pose-hand-displacement-v1"
+    | "pose-rear-foot-displacement-v1"
+    | "pose-bilateral-foot-displacement-v1"
+    | "pose-head-axis-proxy-crossing-v1";
+  readonly decision: "confirmed" | "needs-review";
+  readonly reasons: readonly string[];
+}
 
 export interface StartEvent {
   readonly id: string;
   readonly type: StartEventType;
   readonly timestampMs: number | null;
   readonly frameIndex: number | null;
-  /** 頭頂など、画面上でコーチが指定した点。未指定はnull。 */
+  /** 頭頂などの画面上の点。自動時はPose推定、手動時はコーチ指定。未取得はnull。 */
   readonly point: Point2D | null;
   readonly confidence: number;
   readonly status: StartEventStatus;
   readonly source: StartEventSource;
+  readonly automaticDecision?: StartAutomaticDecision;
 }
 
 export interface StartCalibrationV1 {
@@ -93,7 +110,7 @@ export type StartMetricType =
   | "zero-to-five-meter-average-speed";
 
 export type StartMetricUnit = "ms" | "s" | "m" | "m/s" | "deg";
-export type StartMetricStatus = "verified" | "unavailable";
+export type StartMetricStatus = "confirmed" | "verified" | "unavailable";
 
 export interface StartMetric {
   readonly id: StartMetricType;
@@ -101,7 +118,7 @@ export interface StartMetric {
   readonly value: number | null;
   readonly unit: StartMetricUnit;
   readonly status: StartMetricStatus;
-  /** 値が成立するために verified である必要があるイベントID。 */
+  /** 値が成立するために自動判定またはコーチ確認が必要なイベントID。 */
   readonly requiredEventIds: readonly string[];
   readonly note: string | null;
 }

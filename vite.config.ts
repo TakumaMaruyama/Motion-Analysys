@@ -1,8 +1,6 @@
 import vinext from "vinext";
 import { defineConfig } from "vite";
 
-import { sites } from "./build/sites-vite-plugin";
-
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 const localBindingConfig = {
@@ -25,7 +23,6 @@ export default defineConfig(async () => {
       : undefined,
     plugins: [
       vinext(),
-      sites(),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
         config: localBindingConfig,
