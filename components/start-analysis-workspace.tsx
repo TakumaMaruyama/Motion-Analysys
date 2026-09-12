@@ -75,13 +75,15 @@ type HistorySnapshot = {
 
 const CALIBRATION_STORAGE_KEY = "motionanalysys.start-calibration.v1";
 const precisionSteps = ["動画と選手区分", "0m・5m・水面校正", "自動判定・確認", "局面別結果"] as const;
-const timingOnlySteps = ["動画と選手区分", "進行方向", "自動判定・確認", "時間結果"] as const;
+const timingOnlySteps = ["動画と選手区分", "簡易速度校正", "自動判定・確認", "時間・速度結果"] as const;
 const timingOnlyMetricIds = new Set([
   "movement-onset-time",
   "block-contact-time",
   "push-off-time",
   "flight-time",
   "entry-time",
+  "takeoff-forward-velocity",
+  "entry-forward-velocity",
   "five-meter-time",
 ]);
 
@@ -188,6 +190,29 @@ function safeCalibration(
   }
 }
 
+function safeTimingVelocityCalibration(
+  marks: CalibrationMarks,
+  metadata: CompetitionVideoMetadata | null,
+  direction: Direction,
+): StartCalibrationV1 | null {
+  if (!metadata || !marks.zeroMeter || !marks.fiveMeter) return null;
+  const candidate: StartCalibrationV1 = {
+    schemaVersion: "1.0",
+    imageWidth: metadata.displayWidth,
+    imageHeight: metadata.displayHeight,
+    zeroMeter: marks.zeroMeter,
+    fiveMeter: marks.fiveMeter,
+    waterSurface: [marks.zeroMeter, marks.fiveMeter],
+    travelDirection: direction,
+  };
+  try {
+    validateStartCalibration(candidate);
+    return candidate;
+  } catch {
+    return null;
+  }
+}
+
 function eventMapFromCandidates(candidates: readonly StartEvent[]): EventMap {
   const next = emptyEvents();
   for (const candidate of candidates) {
@@ -259,8 +284,12 @@ export function StartAnalysisWorkspace() {
     () => safeCalibration(calibrationMarks, metadata, direction),
     [calibrationMarks, direction, metadata],
   );
+  const timingVelocityCalibration = useMemo(
+    () => safeTimingVelocityCalibration(calibrationMarks, metadata, direction),
+    [calibrationMarks, direction, metadata],
+  );
   const steps = analysisMode === "precision" ? precisionSteps : timingOnlySteps;
-  const resultCalibration = analysisMode === "precision" ? calibration : null;
+  const resultCalibration = analysisMode === "precision" ? calibration : timingVelocityCalibration;
   const automaticContext = useMemo(() => ({
     analysisMode,
     effectiveFps: fps,
@@ -447,7 +476,7 @@ export function StartAnalysisWorkspace() {
         if (analysisMode === "precision" && !precisionAssessment.allowed && timingAssessment.allowed) {
           setAnalysisMode("timing-only");
           setAutomaticModeNotice(
-            "60fps未満の動画のため、30fps対応の簡易タイムモードへ切り替えました。確認済みイベントから時間結果を表示します。",
+            "60fps未満の動画のため、30fps対応の簡易タイムモードへ切り替えました。0m・5mを校正すると、確認済みイベントから時間と低精度の推定速度を表示します。",
           );
         }
       }
@@ -593,7 +622,7 @@ export function StartAnalysisWorkspace() {
   }, [events, future, manualHeadEntryPoint]);
 
   const runCandidates = useCallback(async () => {
-    if (!file || !metadata || (analysisMode === "precision" && !calibration)) return;
+    if (!file || !metadata || !resultCalibration) return;
     analysisAbortRef.current?.abort();
     const controller = new AbortController();
     analysisAbortRef.current = controller;
@@ -604,7 +633,7 @@ export function StartAnalysisWorkspace() {
       const result = await runStartCandidateAnalysis({
         sourceFile: file,
         analysisMode,
-        calibration: analysisMode === "precision" ? calibration : null,
+        calibration: resultCalibration,
         travelDirection: direction,
         startStyle: stroke === "backstroke" ? "backstroke" : "dive",
         fixedCamera: fixedCamera === true,
@@ -644,16 +673,16 @@ export function StartAnalysisWorkspace() {
         setAnalysisProgress(null);
       }
     }
-  }, [analysisMode, calibration, direction, file, fixedCamera, metadata, requiredEventTypes, sideOn, singleSwimmer, stroke]);
+  }, [analysisMode, direction, file, fixedCamera, metadata, requiredEventTypes, resultCalibration, sideOn, singleSwimmer, stroke]);
 
   const cancelCandidateAnalysis = useCallback(() => {
     analysisAbortRef.current?.abort();
   }, []);
 
   const saveCalibration = useCallback(() => {
-    if (!calibration) return;
-    localStorage.setItem(CALIBRATION_STORAGE_KEY, JSON.stringify(calibration));
-  }, [calibration]);
+    if (!resultCalibration) return;
+    localStorage.setItem(CALIBRATION_STORAGE_KEY, JSON.stringify(resultCalibration));
+  }, [resultCalibration]);
 
   const loadCalibration = useCallback(() => {
     try {
@@ -712,7 +741,7 @@ export function StartAnalysisWorkspace() {
     context.fillText(
       analysisMode === "precision"
         ? "2D参考計測。水中・3D・力・パワー・公式反応時間は測定しません。"
-        : "時間のみの参考計測。距離・速度・角度・百分位は測定しません。",
+        : "時間と低精度2D速度の参考計測。距離・角度・百分位は測定しません。",
       64,
       790,
     );
@@ -784,7 +813,7 @@ export function StartAnalysisWorkspace() {
         {activeStep === 1 ? (
           <CalibrationStep
             analysisMode={analysisMode}
-            calibration={calibration}
+            calibration={resultCalibration}
             calibrationMarks={calibrationMarks}
             direction={direction}
             onBack={() => setActiveStep(0)}
@@ -805,8 +834,8 @@ export function StartAnalysisWorkspace() {
             analysisMode={analysisMode}
             analysisProgress={analysisProgress}
             automaticAnalysisCompleted={automaticAnalysisCompleted}
-            calibrationReady={analysisMode === "timing-only" || calibration !== null}
-            canAnalyze={captureAllowed && (analysisMode === "timing-only" || calibration !== null) && metadata !== null}
+            calibrationReady={resultCalibration !== null}
+            canAnalyze={captureAllowed && resultCalibration !== null && metadata !== null}
             events={events}
             frameMs={frameMs}
             manualHeadEntryPoint={manualHeadEntryPoint}
@@ -917,7 +946,7 @@ function VideoAndProfileStep({
             <input type="radio" name="start-analysis-mode" value="timing-only" checked={analysisMode === "timing-only"} onChange={() => onModeChange("timing-only")} />
             <span className="font-black">簡易タイムモード</span>
           </span>
-          <span className="mt-2 block text-sm text-slate-600 dark:text-slate-300">30fps以上・斜め撮影可。時間だけを参考計測し、距離・速度・角度・百分位は表示しません。</span>
+          <span className="mt-2 block text-sm text-slate-600 dark:text-slate-300">30fps以上・斜め撮影可。時間と、2点校正による低精度の離台・入水速度を参考表示します。距離・角度・百分位は表示しません。</span>
         </label>
       </fieldset>
       <div className="mt-4 grid gap-4 sm:grid-cols-3">
@@ -973,7 +1002,7 @@ function VideoAndProfileStep({
       {analysisMode === "precision" && (fixedCamera !== true || sideOn !== true || singleSwimmer !== true) ? <p className="mt-3 text-sm text-rose-700">固定・真横・1選手を確認するまで、精密解析へ進めません。</p> : null}
       {analysisMode === "timing-only" && singleSwimmer !== true ? <p className="mt-3 text-sm text-rose-700">1レーン・1選手を確認してから進んでください。</p> : null}
       <p className="mt-3 text-xs text-slate-500">年齢・研究比較区分は結果ファイルにだけ含め、端末へ保存しません。</p>
-      <div className="mt-6 flex justify-end"><Button onClick={onNext} disabled={!canContinue}>{analysisMode === "precision" ? "次へ：校正" : "次へ：進行方向"}</Button></div>
+      <div className="mt-6 flex justify-end"><Button onClick={onNext} disabled={!canContinue}>{analysisMode === "precision" ? "次へ：校正" : "次へ：簡易速度校正"}</Button></div>
     </div>
   );
 }
@@ -1019,24 +1048,31 @@ function CalibrationStep({
   if (analysisMode === "timing-only") {
     return (
       <div>
-        <h3 className="font-bold">2. 進行方向</h3>
+        <h3 className="font-bold">2. 0m・5m簡易速度校正</h3>
         <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-          泳者が進む方向を選びます。簡易タイムでは距離校正を行わず、頭頂入水と5m通過は映像を見て手動で確定します。
+          「0m水面位置」「5m水面位置」を選び、動画上の該当位置を1回ずつクリックします。この2点を5mとして、離台直後・入水直前の前方速度を低精度で換算します。
         </p>
-        {videoUrl ? <video ref={videoRef} src={videoUrl} controls className="mt-4 max-h-[28rem] w-full rounded-xl bg-black" /> : null}
-        <label className="mt-4 grid max-w-xs gap-2 text-sm font-bold">
-          進行方向
-          <select aria-label="進行方向" value={direction} onChange={(event) => setDirection(event.target.value as Direction)} className="h-11 rounded-md border px-3 text-sm">
+        {videoUrl ? <video ref={videoRef} src={videoUrl} controls onClick={onClickVideo} className="mt-4 max-h-[28rem] w-full rounded-xl bg-black" /> : null}
+        <div className="mt-4 flex flex-wrap gap-2">
+          {marks.slice(0, 2).map(([value, label, point]) => (
+            <Button key={value} size="sm" variant={target === value ? "default" : "outline"} onClick={() => setTarget(value)}>
+              {point ? "✓ " : ""}{label === "0m壁" ? "0m水面位置" : "5m水面位置"}
+            </Button>
+          ))}
+          <select aria-label="進行方向" value={direction} onChange={(event) => setDirection(event.target.value as Direction)} className="h-9 rounded-md border px-2 text-sm">
             <option value="left-to-right">左から右</option>
             <option value="right-to-left">右から左</option>
           </select>
-        </label>
+        </div>
+        <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">
+          {calibration ? "0m・5mの簡易速度校正が有効です。" : "2点を指定し、0m→5mが進行方向と整合する必要があります。"}
+        </p>
         <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-950">
-          30fpsでは1フレーム約33msです。固定カメラを確認できる場合だけ高スコアのイベントを自動判定し、それ以外はコーチ確認へ回します。
+          30fpsでは100msに約3フレームしかありません。斜め撮影、遠近、カメラ移動を含む低精度2D推定であり、公式速度や精密モードとの同等比較には使えません。
         </p>
         <div className="mt-6 flex justify-between">
           <Button variant="outline" onClick={onBack}>戻る</Button>
-          <Button onClick={onNext}>次へ：自動判定</Button>
+          <Button onClick={onNext} disabled={!calibration}>次へ：自動判定</Button>
         </div>
       </div>
     );
@@ -1155,7 +1191,7 @@ function EventReviewStep({
           <p className="mt-1 text-xs">自動判定は未検証ベータの推定です。時刻やフレームを変更すると、そのイベントはコーチ確認待ちへ戻ります。</p>
         </div>
       ) : null}
-      {analysisMode === "timing-only" ? <p className="mt-3 rounded-xl bg-sky-50 p-3 text-sm text-sky-950">簡易タイムでは頭頂入水と5m通過を自動判定しません。該当フレームで「現在フレーム」を押して確定してください。</p> : null}
+      {analysisMode === "timing-only" ? <p className="mt-3 rounded-xl bg-sky-50 p-3 text-sm text-sky-950">簡易タイムでは頭頂入水と5m通過の候補を出しても自動確定しません。映像を確認し、該当フレームで確定してください。</p> : null}
       {videoUrl ? <video ref={videoRef} src={videoUrl} controls onClick={onClickVideo} className="mt-4 max-h-[28rem] w-full rounded-xl bg-black" /> : null}
       {analysisMode === "precision" && pointSelectionMode === "head-entry" ? <p className="mt-3 rounded-xl bg-indigo-50 p-3 text-sm text-indigo-950">動画上の頭頂入水位置を1回クリックしてください。その点と現在フレームを候補にします。</p> : null}
 
@@ -1265,8 +1301,8 @@ function ResultsStep({
 
   return (
     <div>
-      <h3 className="font-bold">4. {analysisMode === "precision" ? "局面別結果" : "簡易タイム結果"}</h3>
-      {analysisMode === "timing-only" ? <p className="mt-3 rounded-xl bg-sky-50 p-3 text-sm text-sky-950">30fps以上の時間専用参考計測です。距離・速度・角度・百分位は表示しません。</p> : null}
+      <h3 className="font-bold">4. {analysisMode === "precision" ? "局面別結果" : "簡易タイム・速度結果"}</h3>
+      {analysisMode === "timing-only" ? <p className="mt-3 rounded-xl bg-sky-50 p-3 text-sm text-sky-950">30fps以上の時間と低精度2D速度の参考計測です。速度は0m・5mの2点から換算し、距離・角度・百分位は表示しません。</p> : null}
       {automaticCount > 0 ? <p className="mt-3 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-950">自動判定を{automaticCount}件含む暫定結果です。研究参考帯はコーチ確認済みの指標だけに表示します。</p> : null}
       {!allRequiredEventsResolved ? <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-950">コーチ確認が必要なイベントが残っています。以下の「—」は欠測または未確定です。</p> : null}
       {result.quality.warnings.length > 0 ? <div className="mt-3 rounded-xl bg-slate-50 p-3 text-sm text-slate-700 dark:bg-slate-950/30 dark:text-slate-200"><p className="font-bold">品質・制約</p><ul className="mt-1 list-disc pl-5">{result.quality.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div> : null}
@@ -1314,7 +1350,7 @@ function ResultsStep({
       <p className="mt-4 text-xs text-slate-500">
         {analysisMode === "precision"
           ? "水中速度、最大深度、キック、ブレイクアウト、3D速度、力、パワー、仕事量、公式反応時間、失格判定は扱いません。"
-          : "簡易タイムでは距離、速度、角度、百分位、水中局面、公式反応時間、失格判定を扱いません。"}
+          : "簡易モードの速度は低精度2D推定です。入水距離、角度、百分位、水中局面、公式反応時間、失格判定は扱いません。"}
       </p>
       <Button className="mt-5" variant="outline" onClick={onBack}>イベントを修正</Button>
     </div>

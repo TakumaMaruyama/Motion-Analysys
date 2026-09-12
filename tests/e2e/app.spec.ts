@@ -62,6 +62,9 @@ test("ホーム画面はStart専用で4種目を選べる", async ({ page }) => 
   await expect(page.getByLabel("精密モード")).toBeChecked();
   await expect(page.getByLabel("簡易タイムモード")).not.toBeChecked();
   await expect(page.getByRole("heading", { name: "競泳スタートを自動判定" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "競泳スタートの時間と前方速度を、動画から分析する。" })).toBeVisible();
+  await expect(page.getByText("POOL-SIDE START ANALYSIS", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("2モード", { exact: true })).toHaveCount(0);
 });
 
 test("13歳未満は解析を開始できない", async ({ page }) => {
@@ -189,21 +192,32 @@ test("30fps動画は自動で簡易タイムへ切り替わる", async ({ page, 
   await page.getByLabel(/1レーン・1選手を確認/).check();
   await expect(page.getByLabel(/固定カメラを確認/)).not.toBeChecked();
   await expect(page.getByLabel(/真横撮影を確認/)).not.toBeChecked();
-  await expect(page.getByRole("button", { name: "次へ：進行方向" })).toBeEnabled();
+  const nextToCalibration = page.getByRole("button", { name: "次へ：簡易速度校正" });
+  await expect(nextToCalibration).toBeEnabled();
+  await nextToCalibration.click();
+  const nextToAnalysis = page.getByRole("button", { name: "次へ：自動判定" });
+  await expect(page.getByRole("heading", { name: "2. 0m・5m簡易速度校正" })).toBeVisible();
+  await expect(nextToAnalysis).toBeDisabled();
+  const video = page.locator("video");
+  await page.getByRole("button", { name: "0m水面位置" }).click();
+  await video.click({ position: { x: 50, y: 20 } });
+  await page.getByRole("button", { name: "5m水面位置" }).click();
+  await video.click({ position: { x: 250, y: 20 } });
+  await expect(nextToAnalysis).toBeEnabled();
 });
 
-test("簡易タイム結果は時間指標だけを表示する", async ({ page }) => {
+test("簡易タイム結果は時間と低精度速度だけを表示する", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("start-analysis-workspace")).toHaveAttribute("data-hydrated", "true");
   await page.getByLabel("簡易タイムモード").check();
-  await page.getByRole("button", { name: /時間結果/ }).click();
-  for (const label of ["初動時間", "ブロック／壁接触時間", "動作開始後の押し出し時間", "飛行時間", "入水時間", "5m時間"]) {
+  await page.getByRole("button", { name: /時間・速度結果/ }).click();
+  for (const label of ["初動時間", "ブロック／壁接触時間", "動作開始後の押し出し時間", "飛行時間", "入水時間", "離台直後の推定前方速度", "入水直前の推定前方速度", "5m時間"]) {
     await expect(page.getByText(label, { exact: true })).toBeVisible();
   }
-  for (const label of ["入水距離", "離台直後の推定前方速度", "入水直前の推定前方速度", "入水時体幹角度", "0～5m平均速度", "Born et al. 2026 エリート参考帯"]) {
+  for (const label of ["入水距離", "入水時体幹角度", "0～5m平均速度", "Born et al. 2026 エリート参考帯"]) {
     await expect(page.getByText(label, { exact: true })).toHaveCount(0);
   }
-  await expect(page.getByText("30fps以上の時間専用参考計測です。距離・速度・角度・百分位は表示しません。", { exact: true })).toBeVisible();
+  await expect(page.getByText("30fps以上の時間と低精度2D速度の参考計測です。速度は0m・5mの2点から換算し、距離・角度・百分位は表示しません。", { exact: true })).toBeVisible();
 });
 
 test("測定モードを切り替えると旧モードのイベントを残さない", async ({ page }) => {
@@ -215,7 +229,7 @@ test("測定モードを切り替えると旧モードのイベントを残さ�
   await page.getByLabel("簡易タイムモード").check();
   await page.getByRole("button", { name: /自動判定・確認/ }).click();
   await expect(page.getByLabel("号砲／スタート信号時刻")).toHaveValue("");
-  await expect(page.getByText("簡易タイムでは頭頂入水と5m通過を自動判定しません。該当フレームで「現在フレーム」を押して確定してください。", { exact: true })).toBeVisible();
+  await expect(page.getByText("簡易タイムでは頭頂入水と5m通過の候補を出しても自動確定しません。映像を確認し、該当フレームで確定してください。", { exact: true })).toBeVisible();
 });
 
 test("30fps簡易タイムを手動確定して再現可能な結果を保存する", async ({ page, browserName }) => {
@@ -241,7 +255,7 @@ test("30fps簡易タイムを手動確定して再現可能な結果を保存す
   await confirmEvent("頭頂入水", "1.133");
   await confirmEvent("5m頭頂通過（任意）", "2.400");
 
-  await page.getByRole("button", { name: /時間結果/ }).click();
+  await page.getByRole("button", { name: /時間・速度結果/ }).click();
   for (const [label, value] of [
     ["初動時間", "133.00 ms"],
     ["ブロック／壁接触時間", "700.00 ms"],

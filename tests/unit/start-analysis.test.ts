@@ -141,7 +141,7 @@ describe("start analysis", () => {
     expect(withoutSignal.metrics.find((item) => item.id === "entry-time")).toMatchObject({ value: null, status: "unavailable" });
   });
 
-  it("allows 30fps oblique footage in timing-only mode and suppresses every spatial result", () => {
+  it("reports low-precision takeoff and entry velocity for calibrated 30fps timing footage", () => {
     const events = [
       event("signal", 0),
       event("movement-onset", 133),
@@ -163,7 +163,12 @@ describe("start analysis", () => {
     expect(result.metrics.find((item) => item.id === "block-contact-time")).toMatchObject({ value: 700, status: "verified" });
     expect(result.metrics.find((item) => item.id === "flight-time")).toMatchObject({ value: 333, status: "verified" });
     expect(result.metrics.find((item) => item.id === "five-meter-time")).toMatchObject({ value: 2300, status: "verified" });
-    for (const metricId of ["entry-distance", "takeoff-forward-velocity", "entry-forward-velocity", "entry-torso-angle", "zero-to-five-meter-average-speed"] as const) {
+    expect(result.metrics.find((item) => item.id === "takeoff-forward-velocity")?.status).toBe("verified");
+    expect(result.metrics.find((item) => item.id === "takeoff-forward-velocity")?.value).toBeCloseTo(10, 6);
+    expect(result.metrics.find((item) => item.id === "takeoff-forward-velocity")?.note).toContain("低精度2D推定");
+    expect(result.metrics.find((item) => item.id === "entry-forward-velocity")?.value).toBeCloseTo(100 / 33, 6);
+    expect(result.metrics.find((item) => item.id === "entry-forward-velocity")?.note).toContain("低精度2D推定");
+    for (const metricId of ["entry-distance", "entry-torso-angle", "zero-to-five-meter-average-speed"] as const) {
       expect(result.metrics.find((item) => item.id === metricId)).toMatchObject({
         value: null,
         status: "unavailable",
@@ -172,7 +177,7 @@ describe("start analysis", () => {
     }
     expect(result.percentiles).toEqual([]);
     expect(result.quality.warnings.join(" ")).toContain("1フレーム約33ms");
-    expect(result.quality.warnings.join(" ")).toContain("斜め撮影");
+    expect(result.quality.warnings.join(" ")).toContain("斜め撮影の前方速度");
   });
 
   it("allows different start events to share one 30fps frame without suppressing time results", () => {
@@ -195,6 +200,7 @@ describe("start analysis", () => {
 
     expect(result.quality.status).toBe("needs-review");
     expect(result.quality.warnings.join(" ")).not.toContain("時系列順序が不正");
+    expect(result.quality.warnings.join(" ")).toContain("簡易速度校正が必要");
     expect(result.metrics).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "movement-onset-time", value: 133, status: "verified" }),
       expect.objectContaining({ id: "block-contact-time", value: 700, status: "verified" }),
@@ -203,6 +209,8 @@ describe("start analysis", () => {
       expect.objectContaining({ id: "entry-time", value: 1_033, status: "verified" }),
       expect.objectContaining({ id: "five-meter-time", value: 2_300, status: "verified" }),
     ]));
+    expect(result.metrics.find((item) => item.id === "takeoff-forward-velocity")?.value).toBeNull();
+    expect(result.metrics.find((item) => item.id === "entry-forward-velocity")?.value).toBeNull();
   });
 
   it("rejects footage below 30fps even in timing-only mode", () => {

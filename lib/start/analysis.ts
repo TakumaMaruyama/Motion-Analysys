@@ -62,6 +62,8 @@ const TIMING_ONLY_METRICS = new Set<StartMetricType>([
   "push-off-time",
   "flight-time",
   "entry-time",
+  "takeoff-forward-velocity",
+  "entry-forward-velocity",
   "five-meter-time",
 ]);
 
@@ -369,9 +371,10 @@ export function assessStartAnalysisQuality(
     if (calibration === null) warnings.push("0m・5m・水面の校正が未完了です。");
   } else {
     if (video.effectiveFps === null || video.effectiveFps + 0.05 < 30) warnings.push("簡易タイムモードは最低30fpsが必要です。");
-    else if (video.effectiveFps < 60) warnings.push("30fpsでは1フレーム約33msです。時間は粗い参考値として扱ってください。");
+    else if (video.effectiveFps < 60) warnings.push("30fpsでは1フレーム約33msです。時間と前方速度は粗い参考値として扱ってください。");
     if (!video.fixedCamera) warnings.push("カメラが動く映像では自動判定を行わないため、各イベントを手動で確認してください。");
-    if (!video.sideOn) warnings.push("斜め撮影では距離・速度・角度を測定せず、時間指標だけを表示します。");
+    if (!video.sideOn) warnings.push("斜め撮影の前方速度には遠近と撮影角度の誤差が含まれます。");
+    if (calibration === null) warnings.push("離台直後・入水直前の推定速度には0m・5mの簡易速度校正が必要です。");
   }
   if (!video.singleSwimmer) warnings.push("1レーン・1選手の映像が必要です。");
   if (events.some((event) => event.status === "candidate" || event.status === "needs-review")) warnings.push("一部イベントはコーチ確認が必要です。確認されるまで依存する数値へ使用しません。");
@@ -460,7 +463,12 @@ export function buildStartAnalysisResult(options: BuildStartAnalysisOptions): St
       }))
     : analysisMode === "timing-only"
       ? calculatedMetrics.map((item): StartMetric => TIMING_ONLY_METRICS.has(item.id)
-        ? item
+        ? item.id === "takeoff-forward-velocity" || item.id === "entry-forward-velocity"
+          ? {
+              ...item,
+              note: `${item.note ?? ""} 簡易モードの低精度2D推定です。30fps、斜め撮影、カメラ移動の影響を受けます。`.trim(),
+            }
+          : item
         : {
             ...item,
             value: null,
