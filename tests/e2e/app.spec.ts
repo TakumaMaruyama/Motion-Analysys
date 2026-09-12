@@ -53,7 +53,6 @@ test("ホーム画面はStart専用で4種目を選べる", async ({ page }) => 
   const workspace = page.getByTestId("start-analysis-workspace");
   await expect(workspace).toHaveAttribute("data-hydrated", "true");
   await expect(page).toHaveTitle(/MotionAnalysys/);
-  await expect(page.getByRole("heading", { level: 1 })).toContainText("スタート");
   await expect(page.getByRole("button", { name: /Swim|Turn/ })).toHaveCount(0);
   await expect(page.locator('input[type="file"][accept*="video"]')).toHaveCount(1);
   const stroke = page.getByLabel("種目");
@@ -62,7 +61,7 @@ test("ホーム画面はStart専用で4種目を選べる", async ({ page }) => 
   await expect(page.getByLabel("精密モード")).toBeChecked();
   await expect(page.getByLabel("簡易タイムモード")).not.toBeChecked();
   await expect(page.getByRole("heading", { name: "競泳スタートを自動判定" })).toBeVisible();
-  await expect(page.getByRole("heading", { level: 1, name: "競泳スタートの時間と前方速度を、動画から分析する。" })).toBeVisible();
+  await expect(page.getByText("競泳スタートの時間と前方速度を、動画から分析する。", { exact: true })).toHaveCount(0);
   await expect(page.getByText("POOL-SIDE START ANALYSIS", { exact: true })).toHaveCount(0);
   await expect(page.getByText("2モード", { exact: true })).toHaveCount(0);
 });
@@ -85,8 +84,9 @@ test("33歳以上は解析可能だが参考帯を表示しない", async ({ pag
 test("撮影品質は明示確認されるまで解析条件を満たさない", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("start-analysis-workspace")).toHaveAttribute("data-hydrated", "true");
-  await expect(page.getByText("固定・真横・1選手を確認するまで、精密解析へ進めません。", { exact: true })).toBeVisible();
-  for (const label of ["固定カメラを確認", "真横撮影を確認", "1レーン・1選手を確認"]) {
+  await expect(page.getByText("当てはまる項目にチェックしてください。", { exact: true })).toBeVisible();
+  await expect(page.getByText("3つの撮影条件にチェックするまで、精密解析へ進めません。", { exact: true })).toBeVisible();
+  for (const label of ["カメラを固定して撮影しましたか？", "選手をほぼ真横から撮影しましたか？", "映っているのは1レーン・1選手だけですか？"]) {
     const checkbox = page.getByLabel(label);
     await expect(checkbox).not.toBeChecked();
     await checkbox.check();
@@ -97,7 +97,7 @@ test("撮影品質は明示確認されるまで解析条件を満たさない",
 test("新しい動画を選ぶと撮影品質の確認をやり直す", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("start-analysis-workspace")).toHaveAttribute("data-hydrated", "true");
-  const qualityLabels = ["固定カメラを確認", "真横撮影を確認", "1レーン・1選手を確認"];
+  const qualityLabels = ["カメラを固定して撮影しましたか？", "選手をほぼ真横から撮影しましたか？", "映っているのは1レーン・1選手だけですか？"];
   for (const label of qualityLabels) await page.getByLabel(label).check();
   await page.getByTestId("start-video-input").setInputFiles({
     name: "new-video-requires-quality-confirmation.webm",
@@ -147,12 +147,12 @@ test("候補未実行のUIはイベントを未取得として手動確認を求
 test("撮影品質UIの確認を外すと解析条件を満たさない", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("start-analysis-workspace")).toHaveAttribute("data-hydrated", "true");
-  await page.getByLabel("固定カメラを確認").check();
-  await page.getByLabel("真横撮影を確認").check();
-  await page.getByLabel("1レーン・1選手を確認").check();
-  await page.getByLabel("固定カメラを確認").uncheck();
-  await page.getByLabel("1レーン・1選手を確認").uncheck();
-  await expect(page.getByText("固定・真横・1選手を確認するまで、精密解析へ進めません。", { exact: true })).toBeVisible();
+  await page.getByLabel("カメラを固定して撮影しましたか？").check();
+  await page.getByLabel("選手をほぼ真横から撮影しましたか？").check();
+  await page.getByLabel("映っているのは1レーン・1選手だけですか？").check();
+  await page.getByLabel("カメラを固定して撮影しましたか？").uncheck();
+  await page.getByLabel("映っているのは1レーン・1選手だけですか？").uncheck();
+  await expect(page.getByText("3つの撮影条件にチェックするまで、精密解析へ進めません。", { exact: true })).toBeVisible();
 });
 
 test("5m任意イベントが未取得でも結果を開ける", async ({ page }) => {
@@ -189,9 +189,9 @@ test("30fps動画は自動で簡易タイムへ切り替わる", async ({ page, 
   await expect(page.getByLabel("簡易タイムモード")).toBeChecked({ timeout: 30_000 });
   await expect(page.getByText(/簡易タイムモードへ切り替えました/)).toBeVisible();
   await expect(page.getByText(/1フレーム約33ms/)).toBeVisible();
-  await page.getByLabel(/1レーン・1選手を確認/).check();
-  await expect(page.getByLabel(/固定カメラを確認/)).not.toBeChecked();
-  await expect(page.getByLabel(/真横撮影を確認/)).not.toBeChecked();
+  await page.getByLabel(/映っているのは1レーン・1選手だけですか？/).check();
+  await expect(page.getByLabel(/カメラを固定して撮影しましたか？/)).not.toBeChecked();
+  await expect(page.getByLabel(/選手をほぼ真横から撮影しましたか？/)).not.toBeChecked();
   const nextToCalibration = page.getByRole("button", { name: "次へ：簡易速度校正" });
   await expect(nextToCalibration).toBeEnabled();
   await nextToCalibration.click();
@@ -239,7 +239,7 @@ test("30fps簡易タイムを手動確定して再現可能な結果を保存す
   await setGeneratedBlankVideo(page, 30);
   await expect(page.getByLabel("簡易タイムモード")).toBeChecked({ timeout: 30_000 });
   await expect(page.getByText(/1フレーム約33ms/)).toBeVisible({ timeout: 30_000 });
-  await page.getByLabel(/1レーン・1選手を確認/).check();
+  await page.getByLabel(/映っているのは1レーン・1選手だけですか？/).check();
   await page.getByRole("button", { name: /自動判定・確認/ }).click();
 
   const confirmEvent = async (label: string, seconds: string) => {

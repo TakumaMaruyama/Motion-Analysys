@@ -3,17 +3,6 @@ import { StartAnalysisWorkspace } from "@/components/start-analysis-workspace";
 export default function HomePage() {
   return (
     <>
-      <section className="relative overflow-hidden border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(99,102,241,0.12),transparent_34%),radial-gradient(circle_at_88%_70%,rgba(14,165,233,0.10),transparent_30%)]" />
-        <div className="relative mx-auto w-full max-w-7xl px-4 py-14 sm:px-6 md:py-20 lg:px-8">
-          <div className="max-w-3xl">
-            <h1 className="text-balance text-4xl font-black tracking-tight text-slate-950 dark:text-white sm:text-5xl lg:text-6xl">
-              競泳スタートの時間と前方速度を、動画から分析する。
-            </h1>
-          </div>
-        </div>
-      </section>
-
       <section id="analysis" className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 md:py-14 lg:px-8">
         <StartAnalysisWorkspace />
       </section>

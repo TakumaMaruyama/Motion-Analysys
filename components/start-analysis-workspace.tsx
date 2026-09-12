@@ -994,13 +994,15 @@ function VideoAndProfileStep({
       {modeNotice ? <p className="mt-3 rounded-xl bg-sky-50 p-3 text-sm font-bold text-sky-950">{modeNotice}</p> : null}
       {analysisMode === "precision" && age > 32 ? <p className="mt-3 text-sm text-amber-800">33歳以上は解析できますが、Born 2026の参考帯は表示しません。</p> : null}
 
-      <div className="mt-4 grid gap-2 text-sm">
-        <label><input type="checkbox" checked={fixedCamera === true} onChange={(event) => setFixedCamera(event.target.checked)} /> 固定カメラを確認{analysisMode === "timing-only" ? "（自動判定に必要）" : ""}</label>
-        <label><input type="checkbox" checked={sideOn === true} onChange={(event) => setSideOn(event.target.checked)} /> 真横撮影を確認{analysisMode === "timing-only" ? "（任意）" : ""}</label>
-        <label><input type="checkbox" checked={singleSwimmer === true} onChange={(event) => setSingleSwimmer(event.target.checked)} /> 1レーン・1選手を確認</label>
-      </div>
-      {analysisMode === "precision" && (fixedCamera !== true || sideOn !== true || singleSwimmer !== true) ? <p className="mt-3 text-sm text-rose-700">固定・真横・1選手を確認するまで、精密解析へ進めません。</p> : null}
-      {analysisMode === "timing-only" && singleSwimmer !== true ? <p className="mt-3 text-sm text-rose-700">1レーン・1選手を確認してから進んでください。</p> : null}
+      <fieldset className="mt-4 grid gap-2 text-sm">
+        <legend className="font-bold">撮影条件</legend>
+        <p className="mb-1 text-xs text-slate-500">当てはまる項目にチェックしてください。</p>
+        <label><input type="checkbox" checked={fixedCamera === true} onChange={(event) => setFixedCamera(event.target.checked)} /> カメラを固定して撮影しましたか？{analysisMode === "timing-only" ? "（自動判定に必要）" : ""}</label>
+        <label><input type="checkbox" checked={sideOn === true} onChange={(event) => setSideOn(event.target.checked)} /> 選手をほぼ真横から撮影しましたか？{analysisMode === "timing-only" ? "（任意）" : ""}</label>
+        <label><input type="checkbox" checked={singleSwimmer === true} onChange={(event) => setSingleSwimmer(event.target.checked)} /> 映っているのは1レーン・1選手だけですか？</label>
+      </fieldset>
+      {analysisMode === "precision" && (fixedCamera !== true || sideOn !== true || singleSwimmer !== true) ? <p className="mt-3 text-sm text-rose-700">3つの撮影条件にチェックするまで、精密解析へ進めません。</p> : null}
+      {analysisMode === "timing-only" && singleSwimmer !== true ? <p className="mt-3 text-sm text-rose-700">「映っているのは1レーン・1選手だけですか？」にチェックしてから進んでください。</p> : null}
       <p className="mt-3 text-xs text-slate-500">年齢・研究比較区分は結果ファイルにだけ含め、端末へ保存しません。</p>
       <div className="mt-6 flex justify-end"><Button onClick={onNext} disabled={!canContinue}>{analysisMode === "precision" ? "次へ：校正" : "次へ：簡易速度校正"}</Button></div>
     </div>
